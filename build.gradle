@@ -17,9 +17,9 @@ buildscript {
 
 apply plugin: 'forge'
 
-version = "1.0.0"
+version = "1.0.1"
 group = "com.aibot"
-archivesBaseName = "aibot"
+archivesBaseName = "AiNeuralNetWorkMineCraft"
 
 sourceCompatibility = 1.6
 targetCompatibility = 1.6
@@ -66,5 +66,5 @@ processResources {
 }
 
 jar {
-    archiveName = "aibot.jar"
+    archiveName = "AiNeuralNetWorkMineCraft.jar"
 }
