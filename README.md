@@ -1,4 +1,4 @@
-# aibot
+# AiNeuralNetWorkMineCraft
 
 A server-side Minecraft Forge **1.7.10** mod that runs an autonomous, neural-network-driven fake player ("Direwolf20") on a live server. No client-side install required — it appears to other players as an ordinary player with a name tag, skin, and tab-list entry, driven entirely server-side via a fake network handler (no real client connection behind it).
 
