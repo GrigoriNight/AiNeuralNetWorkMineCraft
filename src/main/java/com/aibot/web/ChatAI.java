@@ -1,5 +1,8 @@
 package com.aibot.web;
 
+import com.aibot.brain.ActionType;
+import com.aibot.brain.BrainManager;
+import com.aibot.brain.StateEncoder;
 import com.aibot.fakeplayer.BotPlayer;
 import com.aibot.fakeplayer.BotPlayerManager;
 import com.aibot.fakeplayer.GoalType;
@@ -49,8 +52,15 @@ public class ChatAI {
 
     private static boolean enabled = false;
     // Matches what's actually pulled in the user's local Ollama (confirmed via
-    // `ollama list`) - "llama3.2" was a placeholder that doesn't exist there.
-    private static String model = "llama3.1:8b";
+    // "direwolf20" is a custom Ollama model (see Modelfile-direwolf20, built
+    // with `ollama create direwolf20 -f Modelfile-direwolf20`) - the bot's own
+    // dedicated model, not just a generic one given instructions each time.
+    // It's qwen2.5:1.5b underneath, but with the persona/modpack-grounding
+    // system prompt baked directly into the model itself, per explicit
+    // "its own llm build around minecraft" request. Falls back to any Ollama
+    // model name via /brain chat model if this one isn't present on a
+    // different machine (e.g. a fresh setup that hasn't run the Modelfile yet).
+    private static String model = "direwolf20";
     // Set to the user's Cloudflare-tunneled Ollama endpoint per explicit request
     // ("here the url chat.grigorinightdragon.com") - still just /brain chat url
     // away from being pointed back at localhost or anywhere else.
@@ -236,11 +246,13 @@ public class ChatAI {
         if ("follow_player".equals(result.toolName)) {
             bot.followPlayerName = playerName;
             bot.copyPlayerName = null;
+            recordToolSample(bot);
         } else if ("stop_following".equals(result.toolName)) {
             bot.followPlayerName = null;
         } else if ("go_home".equals(result.toolName)) {
             if (bot.dimension == BotPlayerManager.HOME_DIMENSION) {
                 bot.forcedGoingHome = true;
+                recordToolSample(bot);
             }
         } else if ("start_mining".equals(result.toolName)) {
             BotPlayerManager.setMiningModeIntent(true);
@@ -254,6 +266,29 @@ public class ChatAI {
                 BotPlayerManager.addGoal(type, result.toolAmount);
             }
         }
+    }
+
+    /**
+     * Feeds the movement/action network from the chat AI's confirmed
+     * decisions - recorded as a HUMAN sample, not self-play, since a real
+     * player explicitly asked for this action (not the bot imitating its own
+     * unprompted choice) and the tool call actually fired. That's genuinely
+     * player-confirmed intent, on par with the samples PlayerActionRecorder
+     * gets from watching real players move - it shouldn't be squeezed into
+     * self-play's 15%-of-dataset cap, which exists specifically to limit
+     * how much the network can learn from itself with no ground truth. Only
+     * used for tools that map cleanly onto a single immediate action
+     * (follow_player/go_home both mean "start walking toward something
+     * now") - stop_following, start_mining/stop_mining (mode toggles, not
+     * one moment's action), and gather_resource (creates a goal, which
+     * generates its own real samples later via
+     * BotPlayerAI.recordBehaviorSample once actually worked) don't have a
+     * single clean action label, so they're left alone rather than
+     * mislabeling something.
+     */
+    private static void recordToolSample(BotPlayer bot) {
+        double[] state = StateEncoder.encode(bot.worldObj, bot);
+        BrainManager.instance.recordHumanSample(state, ActionType.MOVE_FORWARD);
     }
 
     private static boolean isNearBot(EntityPlayerMP sender) {

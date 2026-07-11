@@ -57,6 +57,18 @@ public class BrainManager {
     /** Smooths the loss reported by /brain stats with an exponential moving average - a single batch's raw average (16 samples) is noisy enough to bounce around a lot tick to tick and isn't a meaningful trend on its own. */
     private static final double LOSS_EMA_ALPHA = 0.05;
 
+    /**
+     * Periodic evaluation over a much larger sample than a single training
+     * batch, computing loss only (no trainStep - doesn't affect the network
+     * or count as a training step) for a truer read on overall performance
+     * than the noisy 16-sample training batch alone. Not a real held-out
+     * validation set (the dataset isn't split - evaluated samples may well
+     * have been trained on before), but still a meaningfully broader, more
+     * stable signal than watching the training loss alone.
+     */
+    private static final int EVAL_INTERVAL_TICKS = 20 * 100; // ~100 seconds
+    private static final int EVAL_BATCH_SIZE = 200;
+
     /** Previously brain.dat/samples.dat only got written on a clean server stop
      * (or a manual /brain save) - an ungraceful stop (crash, kill -9, power loss)
      * meant every training step since the last clean shutdown was silently lost.
@@ -71,10 +83,13 @@ public class BrainManager {
 
     private int tickCounter = 0;
     private int autosaveTickCounter = 0;
+    private int evalTickCounter = 0;
     private long totalTrainingSteps = 0;
     private double lastAverageLoss = 0.0;
     private double smoothedLoss = 0.0;
     private boolean hasSmoothedLoss = false;
+    private double evalLoss = 0.0;
+    private boolean hasEvalLoss = false;
 
     private BrainManager() {
     }
@@ -103,6 +118,15 @@ public class BrainManager {
 
     public double getCurrentLearningRate() {
         return network.getLearningRate();
+    }
+
+    /** Loss averaged over a much larger sample than a single training batch, computed without training on any of it - see EVAL_INTERVAL_TICKS. 0.0 until the first evaluation pass has run. */
+    public double getEvalLoss() {
+        return evalLoss;
+    }
+
+    public boolean hasEvalLoss() {
+        return hasEvalLoss;
     }
 
     public static double getLearningRate() {
@@ -136,6 +160,34 @@ public class BrainManager {
         if (autosaveTickCounter >= AUTOSAVE_INTERVAL_TICKS) {
             autosaveTickCounter = 0;
             save();
+        }
+
+        evalTickCounter++;
+        if (evalTickCounter >= EVAL_INTERVAL_TICKS) {
+            evalTickCounter = 0;
+            runEvaluation();
+        }
+    }
+
+    /** Loss over a much larger sample than a training batch, without training on any of it - see EVAL_INTERVAL_TICKS' doc comment. */
+    private void runEvaluation() {
+        List<TrainingSample> batch = dataset.sampleBatch(EVAL_BATCH_SIZE);
+        if (batch.isEmpty()) return;
+
+        try {
+            double totalLoss = 0.0;
+            int evaluated = 0;
+            for (TrainingSample sample : batch) {
+                if (sample.state.length != StateEncoder.STATE_SIZE) continue;
+                totalLoss += network.loss(sample.state, sample.actionIndex);
+                evaluated++;
+            }
+            if (evaluated > 0) {
+                evalLoss = totalLoss / evaluated;
+                hasEvalLoss = true;
+            }
+        } catch (Exception e) {
+            ErrorLog.record("BrainManager.runEvaluation", e);
         }
     }
 

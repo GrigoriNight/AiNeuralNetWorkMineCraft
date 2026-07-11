@@ -414,6 +414,8 @@ public class CommandBrain extends CommandBase {
                             + " | Training steps: " + BrainManager.instance.getTotalTrainingSteps()
                             + " | Loss (last batch): " + String.format("%.4f", BrainManager.instance.getLastAverageLoss())
                             + " | Loss (smoothed trend): " + String.format("%.4f", BrainManager.instance.getSmoothedLoss())
+                            + " | Loss (eval, 200-sample): " + (BrainManager.instance.hasEvalLoss()
+                                ? String.format("%.4f", BrainManager.instance.getEvalLoss()) : "not run yet")
                             + " | Learning rate: " + String.format("%.5f", BrainManager.instance.getCurrentLearningRate())));
         } else if (sub.equals("test")) {
             if (!(sender instanceof EntityPlayer)) {
