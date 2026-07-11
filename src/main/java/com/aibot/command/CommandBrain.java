@@ -247,23 +247,6 @@ public class CommandBrain extends CommandBase {
                     bot.currentBehavior, bot.getHealth(), bot.getMaxHealth(), bot.getFoodStats().getFoodLevel(),
                     bot.miningMode ? "ON" : "off", bot.posX, bot.posY, bot.posZ, bot.dimension)));
 
-            // Temporary diagnostic for the food-not-eating investigation - wrapped
-            // defensively since /brain status is depended on constantly for live
-            // monitoring and must never itself crash (confirmed live: calling
-            // ItemStack.getDisplayName() on a stack whose underlying Item can't be
-            // resolved - e.g. a stale modded item ID from a saved inventory.dat -
-            // throws, which previously took the whole command down).
-            try {
-                sender.addChatMessage(new ChatComponentText(String.format(
-                        "[debug] isUsingItem=%s itemInUse=%s eatCheckCooldown=%d holding=%s",
-                        bot.isUsingItem(),
-                        describeStackSafely(bot.getItemInUse()),
-                        bot.eatCheckCooldown,
-                        describeStackSafely(bot.getCurrentEquippedItem()))));
-            } catch (Exception e) {
-                sender.addChatMessage(new ChatComponentText("[debug] (failed to render: " + e + ")"));
-            }
-
             StringBuilder targets = new StringBuilder();
             if (bot.hasGatherTarget) targets.append("wood target ").append(fmtCoords(bot.gatherTargetX, bot.gatherTargetY, bot.gatherTargetZ)).append(" | ");
             if (bot.hasStoneTarget) targets.append("stone target ").append(fmtCoords(bot.stoneTargetX, bot.stoneTargetY, bot.stoneTargetZ)).append(" | ");
@@ -511,16 +494,6 @@ public class CommandBrain extends CommandBase {
 
     private static String describeStack(ItemStack stack) {
         return stack.getDisplayName() + " x" + stack.stackSize;
-    }
-
-    /** Null- and exception-safe version of describeStack for diagnostic output - see the /brain status debug line for why this matters. */
-    private static String describeStackSafely(ItemStack stack) {
-        if (stack == null) return "null";
-        try {
-            return describeStack(stack);
-        } catch (Exception e) {
-            return "(unrenderable stack: " + e + ")";
-        }
     }
 
     private static String describeSleepStatus(EntityPlayer.EnumStatus status) {
