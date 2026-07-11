@@ -7,6 +7,7 @@ import com.aibot.fakeplayer.BotPlayer;
 import com.aibot.fakeplayer.BotPlayerAI;
 import com.aibot.fakeplayer.BotPlayerAutoSpawner;
 import com.aibot.fakeplayer.BotPlayerManager;
+import com.aibot.fakeplayer.TrainingBotAI;
 import com.aibot.web.ChatAI;
 import com.aibot.web.ChatLog;
 import com.aibot.web.MainThreadScheduler;
@@ -42,6 +43,8 @@ public class AIBotMod {
         FMLCommonHandler.instance().bus().register(new BotPlayerAI());
         FMLCommonHandler.instance().bus().register(BrainManager.instance);
         FMLCommonHandler.instance().bus().register(new BotPlayerAutoSpawner());
+        MinecraftForge.EVENT_BUS.register(new TrainingBotAI());
+        FMLCommonHandler.instance().bus().register(new TrainingBotAI());
         FMLCommonHandler.instance().bus().register(new MainThreadScheduler());
     }
 

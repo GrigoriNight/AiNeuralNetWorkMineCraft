@@ -36,14 +36,26 @@ public class BotPlayerAutoSpawner {
     }
 
     private void tick() {
+        MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+        if (server == null) return;
+
+        // Extra self-play-only training bots (per explicit "make 16 extra bots
+        // until a real player joins" request) - independent of the main bot's
+        // flee-respawn cooldown below, since they have nothing to do with it.
+        if (BotPlayerManager.hasRealPlayerOnline(server)) {
+            TrainingBotManager.despawnAll();
+        } else {
+            WorldServer trainingWorld = server.worldServerForDimension(0);
+            if (trainingWorld != null) {
+                TrainingBotManager.spawnAllIfNeeded(trainingWorld);
+            }
+        }
+
         // While a flee-respawn is counting down, skip auto-spawn entirely so its
         // cooldown isn't defeated by immediately spawning the bot back in.
         if (BotPlayerManager.tickPendingRespawn(CHECK_INTERVAL_TICKS)) {
             return;
         }
-
-        MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
-        if (server == null) return;
 
         if (BotPlayerManager.getActive() == null && !BotPlayerManager.isHiddenIntent()) {
             WorldServer world = server.worldServerForDimension(0);

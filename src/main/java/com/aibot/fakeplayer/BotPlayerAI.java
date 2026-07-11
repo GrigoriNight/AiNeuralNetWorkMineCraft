@@ -158,6 +158,14 @@ public class BotPlayerAI {
     public void onLivingUpdate(LivingUpdateEvent event) {
         if (!(event.entity instanceof BotPlayer)) return;
         BotPlayer mob = (BotPlayer) event.entity;
+        // Identity check, not just type - now that TrainingBotManager can have
+        // several more BotPlayer instances alive at once (per explicit "make 16
+        // extra bots" request), this full goal/base/chat-aware decision tree
+        // must only ever drive the one real bot. Training bots get their own,
+        // much simpler tick loop (see TrainingBotAI) - letting them fall through
+        // to here too would have several of them fighting over the same shared
+        // goal queue/base-build state as if they were all the same bot.
+        if (mob != BotPlayerManager.getActive()) return;
 
         try {
             tick(mob);

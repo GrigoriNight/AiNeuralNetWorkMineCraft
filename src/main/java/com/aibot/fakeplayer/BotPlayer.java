@@ -84,6 +84,11 @@ public class BotPlayer extends EntityPlayerMP {
     public int totalStuckTicks = 0;
     public int samePredictionStreak = 0;
 
+    /** Only used by TrainingBotAI (the simple explore/mine/fight loop for the extra self-play-only bots) - unused and harmless on the main Direwolf20 instance, which never reaches that code path. */
+    public float trainingMoveYaw = 0.0F;
+    public int trainingDirectionCooldown = 0;
+    public int trainingSampleCooldown = 0;
+
     /** Entities that have attacked this bot before, remembered past vanilla's ~5s getAITarget() window - bounded so it can't grow forever over a long session. */
     private static final int MAX_GRUDGES = 20;
     public final Set<UUID> grudgeEntityIds = new LinkedHashSet<UUID>() {
