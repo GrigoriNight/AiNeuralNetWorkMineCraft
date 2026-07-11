@@ -121,13 +121,20 @@ public class StateEncoder {
             }
         }
 
-        state[10] = 1.0 - (nearestHostileDist / 8.0);
+        // Normalized against ENTITY_SENSE_RADIUS (32), not a stale hardcoded 8 -
+        // confirmed live as a real bug: when the sense radius was widened from
+        // 8 to 32 (for the "give him all the ESP" request), this divisor was
+        // never updated to match, so any entity between 8-32 blocks away
+        // produced an increasingly negative, unbounded feature value (down to
+        // -3.0 at the edge of range) instead of a clean 0-1 scale. Now 1.0 =
+        // right on top of it, 0.0 = at the edge of sense range or beyond/none.
+        state[10] = 1.0 - (nearestHostileDist / ENTITY_SENSE_RADIUS);
         state[11] = nearestHostileAngle;
-        state[12] = 1.0 - (secondHostileDist / 8.0);
+        state[12] = 1.0 - (secondHostileDist / ENTITY_SENSE_RADIUS);
         state[13] = secondHostileAngle;
-        state[14] = 1.0 - (nearestPlayerDist / 8.0);
+        state[14] = 1.0 - (nearestPlayerDist / ENTITY_SENSE_RADIUS);
         state[15] = nearestPlayerAngle;
-        state[16] = 1.0 - (nearestPassiveDist / 8.0);
+        state[16] = 1.0 - (nearestPassiveDist / ENTITY_SENSE_RADIUS);
         state[17] = nearestPassiveAngle;
 
         float yaw = MathHelper.wrapAngleTo180_float(entity.rotationYaw);

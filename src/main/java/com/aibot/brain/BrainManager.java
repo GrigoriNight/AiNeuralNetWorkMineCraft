@@ -24,7 +24,18 @@ import java.util.List;
  */
 public class BrainManager {
 
-    private static final int[] TOPOLOGY = {StateEncoder.STATE_SIZE, 24, 16, ActionType.VALUES.length};
+    // Widened per explicit "add more weights" request - roughly 1,000 total
+    // weights before (19-24-16-N) to ~6,700 now (19-64-48-N). Still trivially
+    // cheap to run: this is a hand-rolled MLP doing plain matrix multiplies on
+    // the server thread every TRAIN_INTERVAL_TICKS, and even a network this
+    // size is microseconds of work, nowhere near enough to risk tick lag.
+    // Changing this discards the currently-trained weights on next load (the
+    // topology-mismatch guard below starts fresh rather than risk misreading
+    // a differently-shaped save file) - the 20k saved samples are unaffected
+    // and it retrains from them immediately, now benefiting from the same
+    // training-quality fixes (momentum, LR decay, weight decay, gradient
+    // clipping, corrected feature normalization) added alongside this.
+    private static final int[] TOPOLOGY = {StateEncoder.STATE_SIZE, 64, 48, ActionType.VALUES.length};
     private static final double LEARNING_RATE = 0.05;
     private static final int TRAIN_INTERVAL_TICKS = 20;
     private static final int BATCH_SIZE = 16;

@@ -22,6 +22,10 @@ public class NeuralNetwork {
 
     private static final Random RANDOM = new Random();
     private static final double MOMENTUM = 0.9;
+    /** L2 weight decay - a small constant pull toward smaller weights each step, alongside the real gradient. Standard regularizer: helps the network settle on simpler, more general patterns instead of fitting noise in the (capped, so inherently repetitive) 20k-sample dataset. Deliberately small - this is a nudge, not a dominant force. */
+    private static final double WEIGHT_DECAY = 0.0001;
+    /** Per-weight gradient clipping - caps how much any single sample can move any single weight in one step. Matters more now that momentum is in play (an unclipped outlier gradient wouldn't just cause one bad step, it'd keep pushing via velocity for several steps afterward). Generous enough not to interfere with ordinary learning. */
+    private static final double GRADIENT_CLIP = 5.0;
 
     private final int[] layerSizes;
     private final double[][][] weights; // [layer][toNeuron][fromNeuron]
@@ -149,12 +153,17 @@ public class NeuralNetwork {
             double[] delta = deltas[l];
             for (int o = 0; o < delta.length; o++) {
                 for (int i = 0; i < prevActivation.length; i++) {
-                    double gradient = delta[o] * prevActivation[i];
+                    // Weight decay only applies to weights, not biases - standard
+                    // practice, since biases don't contribute to overfitting the
+                    // same way (they're per-neuron offsets, not pattern weights).
+                    double gradient = delta[o] * prevActivation[i] + WEIGHT_DECAY * weights[l][o][i];
+                    gradient = Math.max(-GRADIENT_CLIP, Math.min(GRADIENT_CLIP, gradient));
                     double v = MOMENTUM * velocityWeights[l][o][i] - learningRate * gradient;
                     velocityWeights[l][o][i] = v;
                     weights[l][o][i] += v;
                 }
-                double biasV = MOMENTUM * velocityBiases[l][o] - learningRate * delta[o];
+                double biasGradient = Math.max(-GRADIENT_CLIP, Math.min(GRADIENT_CLIP, delta[o]));
+                double biasV = MOMENTUM * velocityBiases[l][o] - learningRate * biasGradient;
                 velocityBiases[l][o] = biasV;
                 biases[l][o] += biasV;
             }
