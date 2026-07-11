@@ -372,7 +372,7 @@ public class CommandBrain extends CommandBase {
                 sender.addChatMessage(new ChatComponentText("No brain bot is currently active."));
                 return;
             }
-            ((EntityPlayer) sender).displayGUIChest(new BotInventoryView(bot.inventory));
+            ((EntityPlayer) sender).displayGUIChest(new BotInventoryView(bot));
         } else if (sub.equals("items")) {
             BotPlayer bot = BotPlayerManager.getActive();
             if (bot == null) {

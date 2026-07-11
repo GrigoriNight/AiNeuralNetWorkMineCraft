@@ -2,9 +2,11 @@ package com.aibot.fakeplayer;
 
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.InventoryPlayer;
+import net.minecraft.init.Items;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.item.ItemArmor;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.EnumChatFormatting;
 
 /**
  * Presents a BotPlayer's InventoryPlayer (36 main slots + 4 armor slots) as a
@@ -21,19 +23,50 @@ import net.minecraft.item.ItemStack;
  * wires GUI slot i in 0..3 to inventory index getSizeInventory()-1-i with
  * ItemArmor.armorType == i, and InventoryPlayer.getStackInSlot maps
  * index>=36 straight onto armorInventory[index-36] with no reordering).
- * Slots 40-44 are unused padding (rejects everything) so the total is a
- * clean 45 = 5*9, which vanilla's generic container GUI renders correctly.
+ * Slots 40-41 show live health/food as read-only indicator stacks (per
+ * explicit "add in his gui so i can see his food level and hearts" request) -
+ * synthesized fresh on every getStackInSlot() call rather than backed by real
+ * storage, same "decorative status item in an otherwise-padding slot" trick
+ * plenty of server plugins use for stat displays in a vanilla container GUI.
+ * A player can still try to drag one out (isItemValidForSlot doesn't gate
+ * removal, only placement), but setInventorySlotContents already no-ops for
+ * slot >= 40, so it just regenerates back - no real item to lose or exploit.
+ * Slots 42-44 are unused padding so the total is still a clean 45 = 5*9,
+ * which vanilla's generic container GUI renders correctly.
  */
 public class BotInventoryView implements IInventory {
 
     public static final int MAIN_SIZE = 36;
     public static final int ARMOR_SIZE = 4;
+    public static final int HEALTH_SLOT = 40;
+    public static final int FOOD_SLOT = 41;
     public static final int SIZE = 45;
 
+    private final BotPlayer bot;
     private final InventoryPlayer inv;
 
-    public BotInventoryView(InventoryPlayer inv) {
-        this.inv = inv;
+    public BotInventoryView(BotPlayer bot) {
+        this.bot = bot;
+        this.inv = bot.inventory;
+    }
+
+    private ItemStack healthIndicatorStack() {
+        float health = bot.getHealth();
+        float maxHealth = bot.getMaxHealth();
+        // Hearts are 2 HP each - stack size roughly mirrors the vanilla heart
+        // count (capped to a sane display range regardless of any modded max
+        // health), with the exact number spelled out in the name either way.
+        int hearts = Math.max(1, Math.min(64, (int) Math.ceil(health / 2.0)));
+        ItemStack stack = new ItemStack(Items.redstone, hearts);
+        stack.setStackDisplayName(EnumChatFormatting.RED + "Health: " + (int) health + "/" + (int) maxHealth);
+        return stack;
+    }
+
+    private ItemStack foodIndicatorStack() {
+        int food = bot.getFoodStats().getFoodLevel();
+        ItemStack stack = new ItemStack(Items.bread, Math.max(1, Math.min(64, food)));
+        stack.setStackDisplayName(EnumChatFormatting.GOLD + "Food: " + food + "/20");
+        return stack;
     }
 
     /** armorInventory[k] holds ItemArmor.armorType == (3 - k). */
@@ -51,6 +84,8 @@ public class BotInventoryView implements IInventory {
         if (slot < MAIN_SIZE) return inv.mainInventory[slot];
         int armorSlot = slot - MAIN_SIZE;
         if (armorSlot < ARMOR_SIZE) return inv.armorInventory[armorSlot];
+        if (slot == HEALTH_SLOT) return healthIndicatorStack();
+        if (slot == FOOD_SLOT) return foodIndicatorStack();
         return null;
     }
 

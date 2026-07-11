@@ -317,6 +317,42 @@ public class BotPlayerAI {
             return;
         }
 
+        // Genuine hunger takes priority over construction - confirmed live as a
+        // real bug (see tryHuntFood's own doc comment): with nothing else
+        // feeding it, food crashed to 0 and stayed there for the bot's entire
+        // session. Must stay above the base-building tier below it, not just
+        // above gatherOrWander's other fallbacks - moving base-building to its
+        // own top-level tier (next) would have silently reintroduced that
+        // exact bug otherwise, since gatherOrWander (and this same hunger
+        // check that used to live at its top) would never even be reached
+        // until the base was finished.
+        if (tryHuntFood(mob)) {
+            mob.currentBehavior = "hunting food";
+            applyNnMovementFlourish(mob);
+            recordBehaviorSample(mob);
+            return;
+        }
+
+        // Building its own base - confirmed live as a real bug: this used to
+        // only run inside gatherOrWander, which is itself only reached when
+        // the NN predicts IDLE. Whenever it predicted anything else
+        // (MOVE_FORWARD, STRAFE_LEFT, etc. - whatever direction it happened
+        // to already be facing, not toward the base site), that took over
+        // instead, and since the base site can be hundreds of blocks away,
+        // an undertrained network alternating between different non-IDLE
+        // guesses could starve base-building indefinitely without ever
+        // triggering the same-prediction-streak safety net (that only
+        // catches repeating the SAME action many times in a row). Elevating
+        // this to its own tier - same idea as the goal queue above - means
+        // the network's own noisy guesses can no longer interrupt a
+        // half-built base once it's underway.
+        if (!BotPlayerManager.isBaseChestPlaced() && tryBuildBase(mob)) {
+            mob.currentBehavior = "building base (see /brain base)";
+            applyNnMovementFlourish(mob);
+            recordBehaviorSample(mob);
+            return;
+        }
+
         if (mob.actionTicksRemaining <= 0) {
             double[] state = StateEncoder.encode(mob.worldObj, mob);
             int idx = BrainManager.instance.getNetwork().predictAction(state);
@@ -1003,30 +1039,14 @@ public class BotPlayerAI {
      * is in range.
      */
     private void gatherOrWander(BotPlayer mob) {
-        // Genuine hunger takes priority over construction - confirmed live as a
-        // real bug: with nothing else feeding it, food crashed to 0 and stayed
-        // there for the bot's entire session (30+ minutes), capping its health,
-        // because tryEat can only eat food it already has and nothing was ever
-        // going out and getting more.
-        if (tryHuntFood(mob)) {
-            applyNnMovementFlourish(mob);
-            recordBehaviorSample(mob);
-            return;
-        }
-
-        // Base-building goes first now (stronger pull toward it per user request) -
-        // it already walks straight toward the site the moment it's not yet close
-        // enough to know the ground level there, and only returns false once it's
-        // actually blocked on a specific missing material for the current build
-        // step, in which case the gathering behaviors below get a turn instead.
-        // Previously this was checked last, meaning it fully topped off every
-        // resource (including well past what building actually needs) before ever
-        // glancing toward the base.
-        if (tryBuildBase(mob)) {
-            applyNnMovementFlourish(mob);
-            recordBehaviorSample(mob);
-            return;
-        }
+        // Hunger and base-building are no longer checked here - both are now
+        // their own top-level priority tiers in tick() (above this whole
+        // NN-decision path), so by the time gatherOrWander ever runs, hunger
+        // is already handled and the base (if not yet built) has already had
+        // its turn this tick. See tick()'s tryHuntFood/tryBuildBase tiers for
+        // why - the short version is that leaving them buried in here (only
+        // reachable on an IDLE prediction) meant the network's own non-IDLE
+        // guesses could starve both indefinitely.
         if (tryGatherWood(mob)) {
             applyNnMovementFlourish(mob);
             recordBehaviorSample(mob);
