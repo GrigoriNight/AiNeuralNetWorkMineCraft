@@ -4,14 +4,18 @@ import com.aibot.brain.ActionType;
 import com.aibot.brain.BrainManager;
 import com.aibot.brain.StateEncoder;
 import com.aibot.fakeplayer.BotPlayer;
+import com.aibot.fakeplayer.BotPlayerManager;
 import com.aibot.web.ChatAI;
 import com.aibot.web.ChatLog;
+import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.PlayerEvent;
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.event.ServerChatEvent;
 import net.minecraftforge.event.entity.living.LivingEvent.LivingUpdateEvent;
 import net.minecraftforge.event.entity.player.AttackEntityEvent;
+import net.minecraftforge.event.entity.player.PlayerSleepInBedEvent;
 import net.minecraftforge.event.world.BlockEvent;
 
 import java.util.HashMap;
@@ -108,6 +112,40 @@ public class PlayerActionRecorder {
     public void onChat(ServerChatEvent event) {
         ChatLog.record(event.username, event.message);
         ChatAI.maybeReplyTo(event.player, event.username, event.message);
+    }
+
+    /**
+     * Per explicit "if a real player is online, make sure hiding the bot lets
+     * them sleep, but keep the brain training like it's dreaming" request: the
+     * bot already tries to auto-sleep at night on its own (see
+     * BotPlayerAI.maybeAutoSleep), but that only succeeds if it happens to be
+     * near a bed at the time - otherwise it stays "awake" and, being a real
+     * entry in the player list, silently blocks vanilla's all-players-must-be-
+     * asleep check from ever letting a real player skip the night. If a real
+     * player starts sleeping while the main bot is online, not already
+     * asleep itself, and not already hidden, this gets it fully out of the
+     * way (same full despawn/"left the game" as a manual /brain hide) so the
+     * real player's sleep can succeed alone - tracked separately from a
+     * manual hide (autoSleepHidden, not hiddenIntent) so BotPlayerAutoSpawner
+     * can bring it back on its own once morning comes, instead of it staying
+     * hidden forever like an intentional /brain hide would. The network
+     * itself never stops training either way - BrainManager's training loop
+     * replays already-collected samples on a fixed tick interval independent
+     * of any bot being spawned, exactly like a sleeping brain still dreaming
+     * while the body isn't doing anything.
+     */
+    @SubscribeEvent
+    public void onPlayerSleep(PlayerSleepInBedEvent event) {
+        if (event.entityPlayer == null || event.entityPlayer instanceof BotPlayer) return;
+
+        MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+        if (server == null || !BotPlayerManager.hasRealPlayerOnline(server)) return;
+
+        BotPlayer bot = BotPlayerManager.getActive();
+        if (bot == null || bot.isPlayerSleeping() || BotPlayerManager.isHiddenIntent()) return;
+
+        BotPlayerManager.setAutoSleepHidden(true);
+        BotPlayerManager.despawn(bot);
     }
 
     private ActionType classifyMovement(PositionSnapshot last, double curX, double curY, double curZ, float yaw, boolean onGround, boolean sprinting) {

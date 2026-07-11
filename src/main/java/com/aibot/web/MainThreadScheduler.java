@@ -15,6 +15,13 @@ public class MainThreadScheduler {
 
     private static final Queue<Runnable> queue = new ConcurrentLinkedQueue<Runnable>();
 
+    // 1 hour at 20 ticks/sec - per explicit "save chat every 1hr" request, so a
+    // crash (not a clean shutdown, which already saves it) never loses more
+    // than an hour of chat history instead of everything since the last
+    // restart.
+    private static final int CHAT_LOG_SAVE_INTERVAL_TICKS = 20 * 60 * 60;
+    private static int chatLogSaveTickCounter = 0;
+
     public static void schedule(Runnable task) {
         queue.add(task);
     }
@@ -25,6 +32,12 @@ public class MainThreadScheduler {
         Runnable task;
         while ((task = queue.poll()) != null) {
             task.run();
+        }
+
+        chatLogSaveTickCounter++;
+        if (chatLogSaveTickCounter >= CHAT_LOG_SAVE_INTERVAL_TICKS) {
+            chatLogSaveTickCounter = 0;
+            ChatLog.save();
         }
     }
 }

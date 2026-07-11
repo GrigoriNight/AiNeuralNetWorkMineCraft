@@ -7,6 +7,8 @@ import com.aibot.fakeplayer.BotPlayer;
 import com.aibot.fakeplayer.BotPlayerManager;
 import com.aibot.fakeplayer.GoalType;
 import cpw.mods.fml.common.FMLCommonHandler;
+import cpw.mods.fml.common.Loader;
+import cpw.mods.fml.common.ModContainer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.MinecraftServer;
 
@@ -24,8 +26,6 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.Charset;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Optional conversational chat replies via an Ollama instance - originally
@@ -66,8 +66,6 @@ public class ChatAI {
     // away from being pointed back at localhost or anywhere else.
     private static String url = normalizeUrl("chat.grigorinightdragon.com");
     private static long lastReplyAtMs = 0L;
-
-    private static final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     private ChatAI() {
     }
@@ -202,7 +200,21 @@ public class ChatAI {
 
         final String finalPlayerName = playerName;
         final String finalMessage = message;
-        executor.submit(new Runnable() {
+        // A fresh daemon thread per request rather than a shared single-thread
+        // executor - confirmed live as the likely explanation for a real,
+        // reproducible bug: chat replies worked for a while then went
+        // completely and permanently silent across multiple separate direct
+        // mentions, several minutes apart, with zero exceptions logged
+        // anywhere and the underlying Ollama/tunnel endpoint independently
+        // confirmed fully healthy via a direct curl test. A single shared
+        // worker thread means any one call that ever blocks past its own
+        // timeout (HttpURLConnection.getResponseCode() has known edge cases
+        // where it can hang past the configured read timeout) wedges every
+        // future chat reply behind it forever, silently, since nothing ever
+        // throws. Per-request threads mean one wedged call can never block
+        // another - worth the minor overhead since replies are already
+        // rate-limited by REPLY_COOLDOWN_MS.
+        Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
                 final AiResult result = requestReply(finalPlayerName, finalMessage);
@@ -227,6 +239,9 @@ public class ChatAI {
                 }
             }
         });
+        thread.setDaemon(true);
+        thread.setName("ChatAI-request");
+        thread.start();
     }
 
     /**
@@ -307,18 +322,46 @@ public class ChatAI {
      * Minecraft (or worse, real-world) knowledge - confirmed live as a real
      * problem: asked for a "fun fact" it invented a false claim about vanilla
      * Minecraft's name origin, and separately, a "go home" reply included the
-     * nonsensical real-world line "on my way to the store". Curated by hand
-     * from this server's actual mod list (modlist.json used for the forge
-     * handshake) down to the recognizable tech/magic mods, rather than dumping
-     * all ~150 modids (mostly compat/library submodules) as noise.
+     * nonsensical real-world line "on my way to the store". Originally a
+     * hand-curated ~15-mod subset of the real list; replaced with the live
+     * Forge mod list per explicit "know what mods the player is using and
+     * everything that mod has" request - every connecting player is on the
+     * same server/modpack, so "what mods the player has" and "what mods this
+     * server has" are the same list. Real per-item knowledge of every one of
+     * ~150 mods still isn't something that can be hand-authored here, so the
+     * system prompt is explicit that it should reason about what a mod with a
+     * given name would plausibly add rather than inventing specifics it can't
+     * actually know, instead of pretending to complete certainty.
      */
-    private static final String MODPACK_PROFILE = "You're playing on a heavily modded Minecraft 1.7.10 server (not "
-            + "vanilla) with mods including Applied Energistics 2, Thermal Expansion, Railcraft, BuildCraft, "
-            + "IndustrialCraft 2, Forestry, Tinkers' Construct, EnderIO, Thaumcraft, Botania, Twilight Forest, "
-            + "Mystcraft, Witchery, PneumaticCraft, Big Reactors, RFTools, ComputerCraft, Extra Utilities, and "
-            + "Iron Chest, among many others - so ores, machines, magic, and dimensions well beyond vanilla are "
-            + "all normal and expected here. Never reference real-world things (stores, cars, phones, etc.) or "
-            + "make up trivia about Minecraft's real-world development - stay entirely in-universe.";
+    private static String cachedModpackProfile = null;
+
+    private static String buildModpackProfile() {
+        if (cachedModpackProfile != null) return cachedModpackProfile;
+
+        StringBuilder names = new StringBuilder();
+        int count = 0;
+        for (ModContainer mod : Loader.instance().getActiveModList()) {
+            String modId = mod.getModId();
+            // Skip Minecraft/Forge/FML/MCP themselves and their internal
+            // submodules - not "mods" from a player's perspective, just noise.
+            if (modId == null) continue;
+            String lower = modId.toLowerCase();
+            if (lower.equals("minecraft") || lower.equals("forge") || lower.equals("fml") || lower.equals("mcp")) continue;
+
+            if (count > 0) names.append(", ");
+            names.append(mod.getName());
+            count++;
+        }
+
+        cachedModpackProfile = "You're playing on a heavily modded Minecraft 1.7.10 server (not vanilla) running "
+                + count + " mods, including: " + names + ". So ores, machines, magic, and dimensions well beyond "
+                + "vanilla are all normal and expected here. You know these mods are installed, but not necessarily "
+                + "every specific item/block/mechanic each one adds - if asked something too specific to know for "
+                + "sure, answer casually and vaguely like a player who hasn't memorized the wiki, don't invent exact "
+                + "fake details. Never reference real-world things (stores, cars, phones, etc.) or make up trivia "
+                + "about Minecraft's real-world development - stay entirely in-universe.";
+        return cachedModpackProfile;
+    }
 
     /** Small, fixed set of things the model can actually make the bot do - each maps 1:1 onto an existing /brain command's underlying state change (see executeTool), nothing new or riskier than what an admin could already type. */
     private static final String TOOLS_JSON =
@@ -350,7 +393,7 @@ public class ChatAI {
             // misspell things, don't capitalize everything, and don't offer
             // unsolicited help - they just answer and move on.
             String systemPrompt = "You are " + BotPlayerManager.getBotName() + ", a real player chatting casually in "
-                    + "Minecraft chat - not an assistant, not an AI, not a customer service bot. " + MODPACK_PROFILE
+                    + "Minecraft chat - not an assistant, not an AI, not a customer service bot. " + buildModpackProfile()
                     + " What you are actually doing right now: \"" + currentActivity + "\" - if asked what you're up "
                     + "to, answer truthfully based on this in your own casual words, not read out literally. "
                     + "Type like an actual player texting fast on a keyboard mid-game: lowercase most of the time, "

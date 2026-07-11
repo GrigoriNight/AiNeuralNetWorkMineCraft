@@ -62,6 +62,7 @@ public class AIBotMod {
         ChatAI.load();
         BotPlayerManager.loadBaseProgress();
         BotPlayerManager.loadGoals();
+        BotPlayerManager.loadKnownPlayerBases();
         webDashboard.start();
     }
 

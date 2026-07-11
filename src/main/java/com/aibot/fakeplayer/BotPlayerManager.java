@@ -28,6 +28,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
@@ -74,6 +75,26 @@ public class BotPlayerManager {
 
     public static void setHiddenIntent(boolean hidden) {
         hiddenIntent = hidden;
+    }
+
+    /**
+     * Separate from hiddenIntent on purpose - this tracks a hide that
+     * PlayerActionRecorder.onPlayerSleep triggered automatically so a real
+     * player's sleep isn't blocked, not one the user asked for with
+     * /brain hide. BotPlayerAutoSpawner clears this (and lets the bot respawn
+     * normally) once it's daytime again; an explicit /brain hide never gets
+     * auto-reversed like that. Not persisted - only ever meaningful within
+     * the same night it was set, never something that should survive a
+     * restart.
+     */
+    private static boolean autoSleepHidden = false;
+
+    public static boolean isAutoSleepHidden() {
+        return autoSleepHidden;
+    }
+
+    public static void setAutoSleepHidden(boolean value) {
+        autoSleepHidden = value;
     }
 
     /**
@@ -176,6 +197,87 @@ public class BotPlayerManager {
                 }
             }
             goalProgress = in.readInt();
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    /**
+     * Any player-built structure the bot notices in passing (bed, chest, or
+     * item frame cluster - see BotPlayerAI's periodic detection check) gets
+     * remembered here, per explicit "if it's near a player-built structure,
+     * get the network to mark it as player's home/base" request. "The
+     * network" can't literally store a discrete GPS fact in its weights (it's
+     * a small classifier over numeric state, not a knowledge base), so this
+     * is the actual mechanism: a persisted list the bot keeps building up
+     * over time, the same way it already remembers its own base site and its
+     * to-do list. Deduplicated against existing entries within
+     * KNOWN_BASE_DEDUP_RADIUS so wandering back through the same structure
+     * repeatedly doesn't pile up redundant near-identical points.
+     * isProtectedFromDigging checks every entry here (in addition to the
+     * user's hardcoded HOME_X/Z and the bot's own base) so digging protection
+     * accumulates as it discovers more of them, not just the live nearby-scan
+     * at the moment of a specific dig attempt.
+     */
+    private static final List<double[]> knownPlayerBases = new ArrayList<double[]>();
+    private static final double KNOWN_BASE_DEDUP_RADIUS = 30.0;
+
+    public static List<double[]> getKnownPlayerBases() {
+        return knownPlayerBases;
+    }
+
+    public static void recordKnownPlayerBase(double x, double z) {
+        for (double[] existing : knownPlayerBases) {
+            double dx = existing[0] - x;
+            double dz = existing[1] - z;
+            if (dx * dx + dz * dz <= KNOWN_BASE_DEDUP_RADIUS * KNOWN_BASE_DEDUP_RADIUS) return;
+        }
+        knownPlayerBases.add(new double[]{x, z});
+        saveKnownPlayerBases();
+    }
+
+    public static void saveKnownPlayerBases() {
+        DataOutputStream out = null;
+        try {
+            out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(new File(getSaveDir(), "knownbases.dat"))));
+            out.writeInt(knownPlayerBases.size());
+            for (double[] loc : knownPlayerBases) {
+                out.writeDouble(loc[0]);
+                out.writeDouble(loc[1]);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (out != null) {
+                try {
+                    out.close();
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    public static void loadKnownPlayerBases() {
+        File file = new File(getSaveDir(), "knownbases.dat");
+        if (!file.exists()) return;
+
+        DataInputStream in = null;
+        try {
+            in = new DataInputStream(new BufferedInputStream(new FileInputStream(file)));
+            int count = in.readInt();
+            knownPlayerBases.clear();
+            for (int i = 0; i < count; i++) {
+                double x = in.readDouble();
+                double z = in.readDouble();
+                knownPlayerBases.add(new double[]{x, z});
+            }
         } catch (IOException e) {
             e.printStackTrace();
         } finally {
@@ -530,13 +632,25 @@ public class BotPlayerManager {
         return bot.sleepInBedAt(bed.posX, bed.posY, bed.posZ);
     }
 
+    // The account used to remotely watch/check on the bot (via /brain status
+    // etc.) rather than actually play - per explicit "make it so they can't
+    // tell that you're online" request: this connection was silently counting
+    // as "a real player online" everywhere that check is used, which despawned
+    // all 16 training bots, re-leashed the main bot, and suppressed its
+    // self-play recording for as long as it stayed connected to watch, even
+    // though nobody was actually playing. Excluded by username specifically
+    // (not by skipping the check for every account) so a genuine real player
+    // on this same account name would still count normally - this only
+    // matters because it's consistently this one monitoring connection.
+    private static final String MONITORING_ONLY_USERNAME = "Hamashaich";
+
     @SuppressWarnings("unchecked")
     public static boolean hasRealPlayerOnline(MinecraftServer server) {
         List<EntityPlayerMP> players = server.getConfigurationManager().playerEntityList;
         for (EntityPlayerMP player : players) {
-            if (!(player instanceof BotPlayer)) {
-                return true;
-            }
+            if (player instanceof BotPlayer) continue;
+            if (MONITORING_ONLY_USERNAME.equalsIgnoreCase(player.getCommandSenderName())) continue;
+            return true;
         }
         return false;
     }

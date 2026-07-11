@@ -23,9 +23,12 @@ import java.util.List;
  * bot via /api/v1/command?action=say, without needing to be connected as a
  * real client itself. Mirrors ErrorLog's structure/pattern.
  *
- * Persisted to <server_root>/aibot/chatlog.dat (save() on server shutdown,
- * load() on startup - see AIBotMod) so chat history survives a restart instead
- * of resetting to empty every time, same as brain.dat/samples.dat/inventory.dat.
+ * Persisted to <server_root>/aibot/chatlog.dat (save() on server shutdown and
+ * every hour in between via MainThreadScheduler - see AIBotMod for the
+ * shutdown call, MainThreadScheduler for the hourly one - load() on startup)
+ * so chat history survives a restart instead of resetting to empty every
+ * time, same as brain.dat/samples.dat/inventory.dat, and a crash never loses
+ * more than an hour of it.
  */
 public class ChatLog {
 

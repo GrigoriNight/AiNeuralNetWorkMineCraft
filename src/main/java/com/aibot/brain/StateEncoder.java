@@ -36,11 +36,18 @@ public class StateEncoder {
     private static final double SLOPE_NORMALIZE = 4.0;
 
     /**
-     * How far the bot senses other entities (hostiles/players/passive mobs) -
-     * this is pure distance math against the entity list, not raycasting, so it
-     * was already unaffected by walls even at the old short 8-block range;
-     * widened per explicit user request to give it much longer-range awareness
-     * of everything nearby, including real players.
+     * How far the bot senses other entities (hostiles/players/passive mobs).
+     * Originally pure distance math against the entity list with no
+     * raycasting at all, meaning it could sense straight through walls -
+     * changed per explicit "make it like a real player would [perceive]"
+     * request: entity sensing is now filtered by an actual line-of-sight
+     * raycast (see hasLineOfSight), so something on the other side of a wall
+     * or floor genuinely isn't sensed, the same as a real player couldn't see
+     * it either. This is a real, deliberate change to what these input
+     * features mean - the network was trained against the old, omniscient
+     * version of them, so behavior may shift for a while as it adapts to the
+     * new, more honest signal. A backup of the pre-change file was kept
+     * before this edit per explicit request.
      */
     private static final double ENTITY_SENSE_RADIUS = 32.0;
 
@@ -96,27 +103,35 @@ public class StateEncoder {
             if (other instanceof BotPlayer) continue;
 
             double dist = other.getDistanceToEntity(entity);
-            double angle = relativeAngleTo(entity, other);
 
+            // Line-of-sight is only actually checked once a candidate would already
+            // improve on the best-known distance for its category - a real raycast
+            // per nearby entity, every tick, across up to 17 simultaneous bots
+            // (main + 16 training) would be real, avoidable server-tick cost for
+            // entities that were never going to become the "nearest" anyway.
             if (other instanceof IMob) {
                 if (dist < nearestHostileDist) {
+                    if (!hasLineOfSight(world, entity, other)) continue;
                     secondHostileDist = nearestHostileDist;
                     secondHostileAngle = nearestHostileAngle;
                     nearestHostileDist = dist;
-                    nearestHostileAngle = angle;
+                    nearestHostileAngle = relativeAngleTo(entity, other);
                 } else if (dist < secondHostileDist) {
+                    if (!hasLineOfSight(world, entity, other)) continue;
                     secondHostileDist = dist;
-                    secondHostileAngle = angle;
+                    secondHostileAngle = relativeAngleTo(entity, other);
                 }
             } else if (other instanceof EntityPlayer) {
                 if (dist < nearestPlayerDist) {
+                    if (!hasLineOfSight(world, entity, other)) continue;
                     nearestPlayerDist = dist;
-                    nearestPlayerAngle = angle;
+                    nearestPlayerAngle = relativeAngleTo(entity, other);
                 }
             } else {
                 if (dist < nearestPassiveDist) {
+                    if (!hasLineOfSight(world, entity, other)) continue;
                     nearestPassiveDist = dist;
-                    nearestPassiveAngle = angle;
+                    nearestPassiveAngle = relativeAngleTo(entity, other);
                 }
             }
         }
@@ -141,6 +156,13 @@ public class StateEncoder {
         state[18] = yaw / 180.0;
 
         return state;
+    }
+
+    /** Real eye-to-eye raycast against solid blocks (liquids don't block vision, matching real-player sight through water) - true when nothing solid sits between the two entities. */
+    private static boolean hasLineOfSight(World world, EntityLivingBase from, EntityLivingBase to) {
+        Vec3 eyeStart = Vec3.createVectorHelper(from.posX, from.posY + from.getEyeHeight(), from.posZ);
+        Vec3 eyeEnd = Vec3.createVectorHelper(to.posX, to.posY + to.getEyeHeight(), to.posZ);
+        return world.rayTraceBlocks(eyeStart, eyeEnd) == null;
     }
 
     private static boolean isInLava(EntityLivingBase entity) {

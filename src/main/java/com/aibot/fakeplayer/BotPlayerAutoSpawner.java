@@ -57,8 +57,17 @@ public class BotPlayerAutoSpawner {
             return;
         }
 
-        if (BotPlayerManager.getActive() == null && !BotPlayerManager.isHiddenIntent()) {
-            WorldServer world = server.worldServerForDimension(0);
+        WorldServer world = server.worldServerForDimension(0);
+
+        // Once morning comes, an auto-hide-for-sleep (see
+        // PlayerActionRecorder.onPlayerSleep) has done its job - let the bot
+        // come back like normal. An explicit /brain hide (hiddenIntent) is
+        // never cleared here; only the user reverses that one.
+        if (BotPlayerManager.isAutoSleepHidden() && world != null && world.isDaytime()) {
+            BotPlayerManager.setAutoSleepHidden(false);
+        }
+
+        if (BotPlayerManager.getActive() == null && !BotPlayerManager.isHiddenIntent() && !BotPlayerManager.isAutoSleepHidden()) {
             if (world != null) {
                 BotPlayerManager.spawn(world);
             }

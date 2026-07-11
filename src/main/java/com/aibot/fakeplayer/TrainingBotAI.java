@@ -16,7 +16,9 @@ import net.minecraft.util.MathHelper;
 import net.minecraft.util.Vec3;
 import net.minecraftforge.event.entity.living.LivingEvent.LivingUpdateEvent;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Much simpler than BotPlayerAI's full goal/base/chat-aware decision tree -
@@ -43,6 +45,29 @@ public class TrainingBotAI {
     /** Below this, skip self-play recording - same "don't teach it to imitate a bad moment" reasoning as BotPlayerAI.isGoodStateForSelfPlay. */
     private static final float LOW_HEALTH_SKIP_THRESHOLD = 6.0F;
     private static final float ATTACK_DAMAGE = 3.0F;
+
+    // Novelty-driven exploration bias, per explicit "scan the internet... maybe
+    // we add it to our network" request - inspired by Voyager's own-novelty-
+    // driven curriculum (see README's "What is a Minecraft AI bot?" research
+    // notes), adapted to fit here: no LLM, no rewrite of the core network,
+    // just biasing which direction these bots commit to. World is divided into
+    // flat 64-block cells; shared across every training bot (not per-bot) so
+    // the pool as a whole spreads out instead of overlapping the same ground,
+    // which is the actual point of running up to 16 of them per the original
+    // "find all the caves and holes and buildings and trees" request. Not
+    // persisted to disk on purpose - resetting on restart just means an
+    // occasional re-visit of already-covered ground, not a real problem,
+    // and isn't worth the complexity for a nice-to-have.
+    private static final int NOVELTY_CELL_SIZE = 64;
+    private static final int NOVELTY_LOOKAHEAD_BLOCKS = 96;
+    private static final int NOVELTY_CANDIDATE_DIRECTIONS = 8;
+    private static final Set<Long> visitedCells = new HashSet<Long>();
+
+    private static long cellKey(int worldX, int worldZ) {
+        int cellX = Math.floorDiv(worldX, NOVELTY_CELL_SIZE);
+        int cellZ = Math.floorDiv(worldZ, NOVELTY_CELL_SIZE);
+        return ((long) cellX << 32) ^ (cellZ & 0xffffffffL);
+    }
 
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
@@ -146,11 +171,23 @@ public class TrainingBotAI {
                 || block == Blocks.fire || block == Blocks.cactus;
     }
 
-    /** Picks a random direction and commits to it for DIRECTION_CHANGE_TICKS at a time - crude but effective at covering real distance and varied terrain (caves, structures, trees) rather than circling near spawn like a tight wander would. */
+    /**
+     * Picks a direction and commits to it for DIRECTION_CHANGE_TICKS at a time
+     * - crude but effective at covering real distance and varied terrain
+     * (caves, structures, trees) rather than circling near spawn like a tight
+     * wander would. Direction choice is biased toward wherever the pool of
+     * training bots hasn't already been (see visitedCells above): a handful of
+     * candidate directions are checked and an unvisited one is preferred,
+     * falling back to plain uniform-random whenever every candidate nearby has
+     * already been covered, so it never gets stuck searching for "new" ground
+     * that isn't there.
+     */
     private void explore(BotPlayer mob) {
+        visitedCells.add(cellKey(MathHelper.floor_double(mob.posX), MathHelper.floor_double(mob.posZ)));
+
         mob.trainingDirectionCooldown--;
         if (mob.trainingDirectionCooldown <= 0 || isHazardAhead(mob)) {
-            mob.trainingMoveYaw = mob.worldObj.rand.nextFloat() * 360.0F;
+            mob.trainingMoveYaw = pickExploreYaw(mob);
             mob.trainingDirectionCooldown = DIRECTION_CHANGE_TICKS;
         }
         turnToward(mob, mob.trainingMoveYaw);
@@ -159,6 +196,28 @@ public class TrainingBotAI {
         if (mob.onGround && mob.worldObj.rand.nextInt(20) == 0) {
             mob.setJumping(true);
         }
+    }
+
+    /** Checks NOVELTY_CANDIDATE_DIRECTIONS evenly-spaced directions and prefers one whose lookahead point lands in a cell nobody's reached yet; picks uniformly among unvisited candidates if there's more than one, and falls back to plain uniform-random if all of them are already-visited ground. */
+    private float pickExploreYaw(BotPlayer mob) {
+        float baseYaw = mob.worldObj.rand.nextFloat() * 360.0F;
+        int unvisitedCount = 0;
+        float[] candidates = new float[NOVELTY_CANDIDATE_DIRECTIONS];
+
+        for (int i = 0; i < NOVELTY_CANDIDATE_DIRECTIONS; i++) {
+            float yaw = baseYaw + i * (360.0F / NOVELTY_CANDIDATE_DIRECTIONS);
+            double yawRad = Math.toRadians(yaw);
+            int lookX = MathHelper.floor_double(mob.posX - Math.sin(yawRad) * NOVELTY_LOOKAHEAD_BLOCKS);
+            int lookZ = MathHelper.floor_double(mob.posZ + Math.cos(yawRad) * NOVELTY_LOOKAHEAD_BLOCKS);
+
+            if (!visitedCells.contains(cellKey(lookX, lookZ))) {
+                candidates[unvisitedCount] = yaw;
+                unvisitedCount++;
+            }
+        }
+
+        if (unvisitedCount == 0) return baseYaw;
+        return candidates[mob.worldObj.rand.nextInt(unvisitedCount)];
     }
 
     private boolean isHazardAhead(BotPlayer mob) {

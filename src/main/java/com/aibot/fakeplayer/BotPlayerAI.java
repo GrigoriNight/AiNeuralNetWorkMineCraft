@@ -11,6 +11,7 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockDoor;
 import net.minecraft.block.material.Material;
 import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.entity.item.EntityItemFrame;
 import net.minecraft.entity.monster.IMob;
 import net.minecraft.entity.passive.EntityAnimal;
 import net.minecraft.entity.passive.EntityChicken;
@@ -32,6 +33,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.ItemSword;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.ChunkCoordinates;
 import net.minecraft.util.DamageSource;
 import net.minecraft.util.MathHelper;
@@ -76,6 +78,12 @@ public class BotPlayerAI {
     private static final int STUCK_BREAK_THRESHOLD_TICKS = 20;
     /** Nearby bed/chest treated as "probably a base" for the obstacle-breaking guard - see isProtectedFromDigging. */
     private static final double STRUCTURE_PROTECT_RADIUS = 8.0;
+    /** How often maybeDetectPlayerStructure re-checks the bot's own surroundings - a real block/entity scan, not run every tick. */
+    private static final int STRUCTURE_DETECT_INTERVAL_TICKS = 200;
+    /** How often followPathOrStraightLine recomputes its route once the current one is exhausted or this cooldown lapses - a real A* search isn't free, so this isn't redone every tick even while actively following a path. */
+    private static final int PATH_REPATH_INTERVAL_TICKS = 100;
+    private static final double PATH_WAYPOINT_REACH_DISTANCE = 1.2;
+    private static final int PATH_SAMPLE_INTERVAL_TICKS = 8;
     /**
      * Deliberately much smaller than HOME_PROTECT_RADIUS (100, tuned for "don't
      * chop wood that might be a wall") - confirmed live as a real bug: using the
@@ -217,6 +225,7 @@ public class BotPlayerAI {
         maybeCloseDoor(mob);
         tryEat(mob);
         tryCraft(mob);
+        maybeDetectPlayerStructure(mob);
 
         // Critically low health - flee by logging out entirely rather than
         // continuing to fight (BotPlayer.attackEntityFrom already floors health at
@@ -885,10 +894,18 @@ public class BotPlayerAI {
         // resetting the counter it depends on before it could accumulate. This is
         // the guaranteed last resort once NOTHING else has resolved it for a
         // genuinely long time (10s), regardless of why.
+        //
+        // Leaky bucket instead of a hard reset: confirmed live as a second real bug
+        // - a bot standing in water while genuinely wedged in place still never hit
+        // this threshold, because water current causes tiny sub-block drift most
+        // ticks (invisible in the rounded /brain status position) that occasionally
+        // exceeds STUCK_MOVE_EPSILON and wiped the whole counter back to 0 right
+        // before it would have fired. Sustained real movement still drains it fast
+        // (5/tick), but one stray jitter tick can no longer erase all progress.
         if (triedToMove && barelyMoved) {
             mob.totalStuckTicks++;
-        } else {
-            mob.totalStuckTicks = 0;
+        } else if (mob.totalStuckTicks > 0) {
+            mob.totalStuckTicks = Math.max(0, mob.totalStuckTicks - 5);
         }
         if (mob.totalStuckTicks >= ULTIMATE_STUCK_TICKS) {
             forceUnstuck(mob);
@@ -985,10 +1002,15 @@ public class BotPlayerAI {
      * (15) here, so the bot could still break blocks anywhere from 15-100 blocks
      * out from home. The bot's own constructed base still only needs the tighter
      * DIG_PROTECT_RADIUS since it's a small 5x5 structure, not a whole base area.
-     * Also uses a nearby bed/chest as a best-effort heuristic for "this is
-     * probably someone else's base" - imperfect (no real per-block ownership
-     * exists to check against in vanilla Minecraft), but reasonable given the
-     * alternative is no protection at all for other players' builds.
+     * Also uses a nearby bed/chest/item-frame cluster as a best-effort
+     * heuristic for "this is probably someone else's base" - imperfect (no
+     * real per-block ownership exists to check against in vanilla Minecraft),
+     * but reasonable given the alternative is no protection at all for other
+     * players' builds. Also checks every location in
+     * BotPlayerManager.getKnownPlayerBases() - locations this same heuristic
+     * has already flagged in the past, remembered persistently (see
+     * maybeDetectPlayerStructure) rather than only ever protecting whatever
+     * happens to be in range of THIS specific dig attempt.
      */
     private boolean isProtectedFromDigging(BotPlayer mob, int x, int y, int z) {
         double hdx = x + 0.5 - BotPlayerManager.HOME_X;
@@ -999,10 +1021,21 @@ public class BotPlayerAI {
         double bdz = z + 0.5 - BotPlayerManager.getBaseZ();
         if (bdx * bdx + bdz * bdz <= DIG_PROTECT_RADIUS * DIG_PROTECT_RADIUS) return true;
 
-        World world = mob.worldObj;
-        int radius = (int) STRUCTURE_PROTECT_RADIUS;
-        for (int dx = -radius; dx <= radius; dx++) {
-            for (int dz = -radius; dz <= radius; dz++) {
+        for (double[] known : BotPlayerManager.getKnownPlayerBases()) {
+            double kdx = x + 0.5 - known[0];
+            double kdz = z + 0.5 - known[1];
+            if (kdx * kdx + kdz * kdz <= STRUCTURE_PROTECT_RADIUS * STRUCTURE_PROTECT_RADIUS) return true;
+        }
+
+        return hasNearbyStructureSignal(mob.worldObj, x, y, z, STRUCTURE_PROTECT_RADIUS);
+    }
+
+    /** Shared bed/chest/item-frame detection - used both reactively (isProtectedFromDigging, checked around a specific block about to be dug) and proactively (maybeDetectPlayerStructure, checked around the bot's own current position on a timer). */
+    @SuppressWarnings("unchecked")
+    private boolean hasNearbyStructureSignal(World world, int x, int y, int z, double radius) {
+        int r = (int) radius;
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dz = -r; dz <= r; dz++) {
                 for (int dy = -3; dy <= 3; dy++) {
                     int cx = x + dx;
                     int cy = y + dy;
@@ -1012,7 +1045,33 @@ public class BotPlayerAI {
                 }
             }
         }
-        return false;
+        List<EntityItemFrame> frames = world.getEntitiesWithinAABB(EntityItemFrame.class,
+                AxisAlignedBB.getBoundingBox(x - radius, y - 3, z - radius, x + radius, y + 3, z + radius));
+        return !frames.isEmpty();
+    }
+
+    /**
+     * Per explicit "if it's near a player-built structure, get the network to
+     * mark it as player's home/base" request - periodically (not every tick,
+     * this scans a real volume of blocks) checks whether the bot's own
+     * current position is near a bed/chest/item-frame cluster and, if so,
+     * remembers the location persistently via
+     * BotPlayerManager.recordKnownPlayerBase (which already dedupes against
+     * anything already known nearby). Passive only - never triggers digging,
+     * building, or any other behavior change on its own; it purely feeds
+     * isProtectedFromDigging's growing memory of where not to dig.
+     */
+    private void maybeDetectPlayerStructure(BotPlayer mob) {
+        mob.structureDetectCooldown--;
+        if (mob.structureDetectCooldown > 0) return;
+        mob.structureDetectCooldown = STRUCTURE_DETECT_INTERVAL_TICKS;
+
+        int x = MathHelper.floor_double(mob.posX);
+        int y = MathHelper.floor_double(mob.posY);
+        int z = MathHelper.floor_double(mob.posZ);
+        if (hasNearbyStructureSignal(mob.worldObj, x, y, z, STRUCTURE_PROTECT_RADIUS)) {
+            BotPlayerManager.recordKnownPlayerBase(mob.posX, mob.posZ);
+        }
     }
 
     private void breakIfBreakable(BotPlayer mob, int x, int y, int z) {
@@ -1978,12 +2037,14 @@ public class BotPlayerAI {
             double dx = BotPlayerManager.getBaseX() - mob.posX;
             double dz = BotPlayerManager.getBaseZ() - mob.posZ;
             if (dx * dx + dz * dz > GATHER_SCAN_RADIUS * GATHER_SCAN_RADIUS) {
-                // Too far to know the real ground height yet - walk toward the site first.
-                float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
-                turnToward(mob, yaw);
-                mob.moveStrafing = 0.0F;
-                mob.moveForward = MOVE_SPEED;
-                return true;
+                // Too far to know the real ground height yet - walk toward the
+                // site first. This exact branch is what got a bot stuck
+                // standing in water for minutes earlier tonight (straight-line
+                // walk with no way to route around an obstacle) - now tries
+                // real pathfinding first (see followPathOrStraightLine), with
+                // the same straight-line walk kept as the fallback for
+                // whenever no route is found within the search budget.
+                return followPathOrStraightLine(mob, BotPlayerManager.getBaseX(), mob.posY, BotPlayerManager.getBaseZ());
             }
             int gy = findGroundY(mob.worldObj,
                     MathHelper.floor_double(BotPlayerManager.getBaseX()), MathHelper.floor_double(mob.posY), MathHelper.floor_double(BotPlayerManager.getBaseZ()));
@@ -2005,6 +2066,85 @@ public class BotPlayerAI {
             return placeBaseCraftingTable(mob, baseY);
         }
         return placeBaseChest(mob, baseY);
+    }
+
+    /**
+     * Real A* pathfinding toward a goal (see Pathfinder), falling back to this
+     * mod's existing straight-line walk whenever no route is found within the
+     * search budget (chunks not loaded, genuinely no reachable path, or the
+     * bounded search radius was exceeded) - per explicit "make something like
+     * [SoulFire's real pathfinding], for the network to feed it" request.
+     * Computes a path once and follows it across many ticks (recomputing on
+     * a cooldown, not every tick - a real search isn't free), advancing to
+     * the next waypoint once close enough and jumping when the next one is a
+     * step up. Every waypoint-following tick is recorded as a HUMAN-quality
+     * sample (see recordPathfindingSample) rather than self-play, since this
+     * is genuine expert demonstration from an actual search finding a real
+     * route - not the network's own uncertain guess - so it teaches the
+     * network what competent, non-stuck movement toward a distant goal
+     * actually looks like. Currently wired into exactly one call site
+     * (tryBuildBase's "walk toward the site" branch, the exact spot that got
+     * a bot stuck standing in water for minutes earlier tonight) rather than
+     * every movement path in this class, so the blast radius of this being a
+     * brand-new, not-yet-live-tested system stays contained to one place.
+     */
+    private boolean followPathOrStraightLine(BotPlayer mob, double goalX, double goalY, double goalZ) {
+        int gx = MathHelper.floor_double(goalX);
+        int gy = MathHelper.floor_double(goalY);
+        int gz = MathHelper.floor_double(goalZ);
+
+        mob.pathRepathCooldown--;
+        boolean needsPath = mob.currentPath == null || mob.pathIndex >= mob.currentPath.size() || mob.pathRepathCooldown <= 0;
+        if (needsPath) {
+            mob.pathRepathCooldown = PATH_REPATH_INTERVAL_TICKS;
+            mob.currentPath = Pathfinder.findPath(mob.worldObj,
+                    MathHelper.floor_double(mob.posX), MathHelper.floor_double(mob.posY), MathHelper.floor_double(mob.posZ),
+                    gx, gy, gz);
+            mob.pathIndex = 0;
+        }
+
+        if (mob.currentPath == null || mob.currentPath.isEmpty()) {
+            double dx = goalX - mob.posX;
+            double dz = goalZ - mob.posZ;
+            float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+            turnToward(mob, yaw);
+            mob.moveStrafing = 0.0F;
+            mob.moveForward = MOVE_SPEED;
+            return true;
+        }
+
+        ChunkCoordinates waypoint = mob.currentPath.get(Math.min(mob.pathIndex, mob.currentPath.size() - 1));
+        double wdx = waypoint.posX + 0.5 - mob.posX;
+        double wdz = waypoint.posZ + 0.5 - mob.posZ;
+        if (wdx * wdx + wdz * wdz < PATH_WAYPOINT_REACH_DISTANCE * PATH_WAYPOINT_REACH_DISTANCE
+                && Math.abs(mob.posY - waypoint.posY) <= 1.5
+                && mob.pathIndex < mob.currentPath.size() - 1) {
+            mob.pathIndex++;
+            waypoint = mob.currentPath.get(mob.pathIndex);
+            wdx = waypoint.posX + 0.5 - mob.posX;
+            wdz = waypoint.posZ + 0.5 - mob.posZ;
+        }
+
+        float yaw = (float) Math.toDegrees(Math.atan2(-wdx, wdz));
+        turnToward(mob, yaw);
+        mob.moveStrafing = 0.0F;
+        mob.moveForward = MOVE_SPEED;
+        if (waypoint.posY > mob.posY + 0.1 && mob.onGround) {
+            mob.setJumping(true);
+        }
+
+        recordPathfindingSample(mob);
+        return true;
+    }
+
+    /** Human-quality training sample (not self-play) from a real pathfinding step - see followPathOrStraightLine's doc comment for why this is deliberately not capped/treated like the network's own self-play guesses. */
+    private void recordPathfindingSample(BotPlayer mob) {
+        mob.pathSampleCooldown--;
+        if (mob.pathSampleCooldown > 0) return;
+        mob.pathSampleCooldown = PATH_SAMPLE_INTERVAL_TICKS;
+
+        double[] state = StateEncoder.encode(mob.worldObj, mob);
+        BrainManager.instance.recordHumanSample(state, ActionType.MOVE_FORWARD);
     }
 
     /** Scans down (then a little up) from startY for the first solid block - same idea as StateEncoder's slope helper, duplicated locally since that one's private to StateEncoder. */

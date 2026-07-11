@@ -83,6 +83,13 @@ public class BotPlayer extends EntityPlayerMP {
     public boolean forcedGoingHome = false;
     public int totalStuckTicks = 0;
     public int samePredictionStreak = 0;
+    public int structureDetectCooldown = 0;
+
+    /** Real A* pathfinding waypoints (see Pathfinder) - null/empty means no path currently being followed, and callers should fall back to their own straight-line walk. */
+    public java.util.List<net.minecraft.util.ChunkCoordinates> currentPath = null;
+    public int pathIndex = 0;
+    public int pathRepathCooldown = 0;
+    public int pathSampleCooldown = 0;
 
     /** Only used by TrainingBotAI (the simple explore/mine/fight loop for the extra self-play-only bots) - unused and harmless on the main Direwolf20 instance, which never reaches that code path. */
     public float trainingMoveYaw = 0.0F;
