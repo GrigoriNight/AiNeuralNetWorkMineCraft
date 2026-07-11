@@ -27,8 +27,14 @@ import net.minecraftforge.common.MinecraftForge;
 @Mod(modid = AIBotMod.MODID, name = AIBotMod.NAME, version = AIBotMod.VERSION, acceptedMinecraftVersions = "[1.7.10]", acceptableRemoteVersions = "*")
 public class AIBotMod {
 
+    // Intentionally left as "aibot", not renamed to match the project's new
+    // display name - the save-data folder (samples.dat, goals.dat, base
+    // progress, etc.) is keyed off this exact string on the live server, and
+    // changing it would make all of that existing data invisible to a rebuilt
+    // jar rather than actually deleting it. Cosmetic renaming happens via NAME
+    // below instead, which is safe to change freely.
     public static final String MODID = "aibot";
-    public static final String NAME = "AI Bot Brain";
+    public static final String NAME = "AiNeuralNetWorkMineCraft";
     public static final String VERSION = "1.0.0";
 
     @Mod.Instance(MODID)
