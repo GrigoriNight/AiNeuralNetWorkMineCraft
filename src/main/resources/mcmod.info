@@ -1,0 +1,16 @@
+[
+  {
+    "modid": "aibot",
+    "name": "AI Bot Brain",
+    "description": "A server-side mob whose neural-network brain learns to imitate player behavior. Player actions (movement, mining, placing, attacking) are logged and used to train the network via backpropagation.",
+    "version": "${version}",
+    "mcversion": "${mcversion}",
+    "url": "",
+    "updateUrl": "",
+    "authorList": ["you"],
+    "credits": "",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]

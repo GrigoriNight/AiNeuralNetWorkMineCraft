@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Direwolf20 &mdash; AI Bot Brain</title>
+<style>
+  :root {
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;
+    --good:           #0ca30c;
+    --critical:       #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --good:           #0ca30c;
+      --critical:       #e66767;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--page-plane);
+    color: var(--text-primary);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  h1 { font-size: 20px; margin: 0; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+  }
+  .badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .badge.online { color: var(--good); }
+  .badge.online .dot { background: var(--good); }
+  .badge.offline { color: var(--text-muted); }
+  .badge.offline .dot { background: var(--text-muted); }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin: 0 0 14px;
+    font-weight: 600;
+  }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 16px;
+  }
+  .tile .value {
+    font-size: 26px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .tile .label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left;
+    padding: 8px 4px;
+    border-bottom: 1px solid var(--gridline);
+    font-size: 14px;
+  }
+  th { color: var(--text-muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+  td.count { font-variant-numeric: tabular-nums; text-align: right; }
+  .empty { color: var(--text-muted); padding: 12px 4px; font-size: 14px; }
+
+  button {
+    appearance: none;
+    border: none;
+    border-radius: 8px;
+    background: var(--series-1);
+    color: white;
+    font: inherit;
+    font-weight: 600;
+    padding: 10px 16px;
+    cursor: pointer;
+  }
+  button:disabled { background: var(--text-muted); cursor: not-allowed; opacity: 0.6; }
+  button:not(:disabled):hover { filter: brightness(1.08); }
+
+  .foot { color: var(--text-muted); font-size: 13px; margin-top: 8px; }
+  .error { color: var(--critical); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="botName">AI Bot Brain</h1>
+    <span id="statusBadge" class="badge offline"><span class="dot"></span><span id="statusText">Offline</span></span>
+  </header>
+
+  <div id="authError" class="card" style="display:none;">
+    <p class="error">Missing or invalid token. Open this page with <code>?token=...</code> from the server console log.</p>
+  </div>
+
+  <div id="content" style="display:none;">
+    <div class="card">
+      <h2>Bot</h2>
+      <div class="tiles">
+        <div class="tile"><div class="value" id="tHealth">&mdash;</div><div class="label">Health</div></div>
+        <div class="tile"><div class="value" id="tAction">&mdash;</div><div class="label">Current action</div></div>
+        <div class="tile"><div class="value" id="tPos">&mdash;</div><div class="label">Position</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Learning</h2>
+      <div class="tiles">
+        <div class="tile"><div class="value" id="tSamples">&mdash;</div><div class="label">Training samples</div></div>
+        <div class="tile"><div class="value" id="tSteps">&mdash;</div><div class="label">Training steps</div></div>
+        <div class="tile"><div class="value" id="tLoss">&mdash;</div><div class="label">Last avg loss</div></div>
+        <div class="tile"><div class="value" id="tRate">&mdash;</div><div class="label">Learning rate</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Inventory</h2>
+      <div id="itemsWrap"></div>
+      <div style="margin-top: 14px;">
+        <button id="dropAllBtn">Drop all items</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="foot">Refreshes every 2s.</p>
+</div>
+
+<script>
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  var token = params.get('token') || '';
+
+  function api(path) {
+    var sep = path.indexOf('?') === -1 ? '?' : '&';
+    return path + sep + 'token=' + encodeURIComponent(token);
+  }
+
+  function fmt(n, digits) {
+    if (typeof n !== 'number') return '—';
+    return n.toFixed(digits === undefined ? 1 : digits);
+  }
+
+  function renderItems(items) {
+    var wrap = document.getElementById('itemsWrap');
+    if (!items || items.length === 0) {
+      wrap.innerHTML = '<div class="empty">No items.</div>';
+      return;
+    }
+    var rows = items.map(function (it) {
+      return '<tr><td>' + escapeHtml(it.name) + '</td><td class="count">' + it.count + '</td></tr>';
+    }).join('');
+    wrap.innerHTML = '<table><thead><tr><th>Item</th><th style="text-align:right;">Count</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  function escapeHtml(s) {
+    var div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  function refresh() {
+    fetch(api('/api/status')).then(function (res) {
+      if (res.status === 403) {
+        document.getElementById('authError').style.display = 'block';
+        document.getElementById('content').style.display = 'none';
+        throw new Error('bad token');
+      }
+      document.getElementById('authError').style.display = 'none';
+      document.getElementById('content').style.display = 'block';
+      return res.json();
+    }).then(function (data) {
+      var badge = document.getElementById('statusBadge');
+      var statusText = document.getElementById('statusText');
+      var dropBtn = document.getElementById('dropAllBtn');
+
+      document.getElementById('botName').textContent = data.name || 'AI Bot Brain';
+
+      if (data.active) {
+        badge.className = 'badge online';
+        statusText.textContent = 'Online';
+        document.getElementById('tHealth').textContent = fmt(data.health, 1) + ' / ' + fmt(data.maxHealth, 0);
+        document.getElementById('tAction').textContent = data.action;
+        document.getElementById('tPos').textContent = Math.round(data.x) + ', ' + Math.round(data.y) + ', ' + Math.round(data.z);
+        renderItems(data.items);
+        dropBtn.disabled = !data.items || data.items.length === 0;
+      } else {
+        badge.className = 'badge offline';
+        statusText.textContent = 'Offline';
+        document.getElementById('tHealth').textContent = '—';
+        document.getElementById('tAction').textContent = '—';
+        document.getElementById('tPos').textContent = '—';
+        renderItems([]);
+        dropBtn.disabled = true;
+      }
+
+      document.getElementById('tSamples').textContent = data.samples + (data.selfSamples ? ' (' + data.selfSamples + ' self)' : '');
+      document.getElementById('tSteps').textContent = data.trainingSteps;
+      document.getElementById('tLoss').textContent = fmt(data.lastAverageLoss, 4);
+      document.getElementById('tRate').textContent = fmt(data.learningRate, 3);
+    }).catch(function () {});
+  }
+
+  document.getElementById('dropAllBtn').addEventListener('click', function () {
+    fetch(api('/api/dropall'), { method: 'POST' }).then(refresh);
+  });
+
+  refresh();
+  setInterval(refresh, 2000);
+})();
+</script>
+</body>
+</html>

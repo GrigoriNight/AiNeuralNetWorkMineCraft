@@ -1,0 +1,70 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        maven {
+            name = "forge"
+            url = "https://files.minecraftforge.net/maven"
+        }
+        maven {
+            name = "sonatype"
+            url = "https://oss.sonatype.org/content/repositories/snapshots/"
+        }
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:1.2-SNAPSHOT'
+    }
+}
+
+apply plugin: 'forge'
+
+version = "1.0.0"
+group = "com.aibot"
+archivesBaseName = "aibot"
+
+sourceCompatibility = 1.6
+targetCompatibility = 1.6
+
+minecraft {
+    version = "1.7.10-10.13.4.1614-1.7.10"
+    runDir = "run"
+    replace "@VERSION@", project.version
+}
+
+// ForgeGradle 1.2 hardcodes downloads of the vanilla client/server jars from
+// http(s)://s3.amazonaws.com/Minecraft.Download/versions/..., which Mojang has
+// long since decommissioned. Point those tasks at the still-live Mojang piston
+// asset URLs for 1.7.10 instead.
+import net.minecraftforge.gradle.tasks.abstractutil.DownloadTask
+import net.minecraftforge.gradle.delayed.DelayedString
+
+afterEvaluate {
+    tasks.withType(DownloadTask).each { t ->
+        if (t.name == 'downloadClient') {
+            t.setUrl(new DelayedString(project, 'https://launcher.mojang.com/v1/objects/e80d9b3bf5085002218d4be59e668bac718abbc6/client.jar'))
+        } else if (t.name == 'downloadServer') {
+            t.setUrl(new DelayedString(project, 'https://launcher.mojang.com/v1/objects/952438ac4e01b4d115c5fc38f891710c4941df29/server.jar'))
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+processResources {
+    inputs.property "version", project.version
+    inputs.property "mcversion", project.minecraft.version
+
+    from(sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+        expand 'version': project.version, 'mcversion': project.minecraft.version
+    }
+
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+}
+
+jar {
+    archiveName = "aibot.jar"
+}
