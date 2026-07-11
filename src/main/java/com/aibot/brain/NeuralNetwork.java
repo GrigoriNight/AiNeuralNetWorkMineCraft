@@ -9,15 +9,26 @@ import java.util.Random;
  * Plain-Java feedforward neural network (multilayer perceptron) trained with
  * backpropagation. ReLU hidden layers, softmax output, cross-entropy loss.
  * No external dependencies so it can be bundled straight into the mod jar.
+ *
+ * Momentum SGD, not plain SGD - velocity terms damp out the noisy zig-zagging
+ * that comes from small (16-sample) batches, without needing a bigger batch
+ * size (which would mean fewer, coarser updates per second of gameplay).
+ * Velocity is intentionally NOT persisted across save/load - it's just an
+ * in-session smoothing aid, not something that needs to survive a restart,
+ * and starting fresh is always safe (worst case, momentum "ramps up" again
+ * over the first few dozen steps).
  */
 public class NeuralNetwork {
 
     private static final Random RANDOM = new Random();
+    private static final double MOMENTUM = 0.9;
 
     private final int[] layerSizes;
     private final double[][][] weights; // [layer][toNeuron][fromNeuron]
     private final double[][] biases;    // [layer][toNeuron]
-    private final double learningRate;
+    private final double[][][] velocityWeights;
+    private final double[][] velocityBiases;
+    private double learningRate;
 
     public NeuralNetwork(int[] layerSizes, double learningRate) {
         this.layerSizes = layerSizes;
@@ -26,12 +37,16 @@ public class NeuralNetwork {
         int numLayers = layerSizes.length - 1;
         weights = new double[numLayers][][];
         biases = new double[numLayers][];
+        velocityWeights = new double[numLayers][][];
+        velocityBiases = new double[numLayers][];
 
         for (int l = 0; l < numLayers; l++) {
             int in = layerSizes[l];
             int out = layerSizes[l + 1];
             weights[l] = new double[out][in];
             biases[l] = new double[out];
+            velocityWeights[l] = new double[out][in];
+            velocityBiases[l] = new double[out];
             double scale = Math.sqrt(2.0 / in);
             for (int o = 0; o < out; o++) {
                 for (int i = 0; i < in; i++) {
@@ -40,6 +55,14 @@ public class NeuralNetwork {
                 biases[l][o] = 0.0;
             }
         }
+    }
+
+    public void setLearningRate(double learningRate) {
+        this.learningRate = learningRate;
+    }
+
+    public double getLearningRate() {
+        return learningRate;
     }
 
     private double[][] forwardAll(double[] input) {
@@ -93,7 +116,7 @@ public class NeuralNetwork {
         return best;
     }
 
-    /** One backpropagation step (stochastic gradient descent) toward the target class. */
+    /** One backpropagation step (momentum SGD) toward the target class. */
     public void trainStep(double[] input, int targetIndex) {
         double[][] activations = forwardAll(input);
         int numLayers = weights.length;
@@ -126,9 +149,14 @@ public class NeuralNetwork {
             double[] delta = deltas[l];
             for (int o = 0; o < delta.length; o++) {
                 for (int i = 0; i < prevActivation.length; i++) {
-                    weights[l][o][i] -= learningRate * delta[o] * prevActivation[i];
+                    double gradient = delta[o] * prevActivation[i];
+                    double v = MOMENTUM * velocityWeights[l][o][i] - learningRate * gradient;
+                    velocityWeights[l][o][i] = v;
+                    weights[l][o][i] += v;
                 }
-                biases[l][o] -= learningRate * delta[o];
+                double biasV = MOMENTUM * velocityBiases[l][o] - learningRate * delta[o];
+                velocityBiases[l][o] = biasV;
+                biases[l][o] += biasV;
             }
         }
     }

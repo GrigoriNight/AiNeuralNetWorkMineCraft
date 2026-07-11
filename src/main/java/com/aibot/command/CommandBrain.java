@@ -412,7 +412,9 @@ public class CommandBrain extends CommandBase {
                     "Training samples: " + BrainManager.instance.getDataset().size()
                             + " (" + BrainManager.instance.getDataset().selfGeneratedSize() + " self-generated)"
                             + " | Training steps: " + BrainManager.instance.getTotalTrainingSteps()
-                            + " | Last avg loss: " + String.format("%.4f", BrainManager.instance.getLastAverageLoss())));
+                            + " | Loss (last batch): " + String.format("%.4f", BrainManager.instance.getLastAverageLoss())
+                            + " | Loss (smoothed trend): " + String.format("%.4f", BrainManager.instance.getSmoothedLoss())
+                            + " | Learning rate: " + String.format("%.5f", BrainManager.instance.getCurrentLearningRate())));
         } else if (sub.equals("test")) {
             if (!(sender instanceof EntityPlayer)) {
                 sender.addChatMessage(new ChatComponentText("Only a player can test the brain - it needs a position/surroundings to evaluate."));
