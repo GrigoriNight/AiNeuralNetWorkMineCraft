@@ -413,9 +413,27 @@ public class BotPlayerAI {
         mob.combatSampleCooldown--;
         if (mob.combatSampleCooldown > 0) return;
         mob.combatSampleCooldown = COMBAT_SAMPLE_INTERVAL_DECISIONS;
+        if (!isGoodStateForSelfPlay(mob)) return;
 
         double[] state = StateEncoder.encode(mob.worldObj, mob);
         BrainManager.instance.recordSelfSample(state, action);
+    }
+
+    /**
+     * Self-play should only reinforce behavior that's actually going well -
+     * per explicit "make it learn from itself, like self-learning" request.
+     * Previously every self-play recording point recorded whatever action was
+     * taken unconditionally, which risked teaching the network "this was the
+     * right move" even while genuinely stuck or about to flee from critical
+     * health - not something worth imitating. Deliberately lenient (only
+     * excludes clearly-bad moments, not just "took some damage" or "briefly
+     * paused"), since self-play is already capped to 15% of the dataset and
+     * doesn't need to be squeezed much further.
+     */
+    private boolean isGoodStateForSelfPlay(BotPlayer mob) {
+        if (mob.totalStuckTicks > 0) return false;
+        if (mob.getHealth() <= FLEE_HEALTH_THRESHOLD) return false;
+        return true;
     }
 
     /**
@@ -515,6 +533,7 @@ public class BotPlayerAI {
         mob.behaviorSampleCooldown--;
         if (mob.behaviorSampleCooldown > 0) return;
         mob.behaviorSampleCooldown = COMBAT_SAMPLE_INTERVAL_DECISIONS;
+        if (!isGoodStateForSelfPlay(mob)) return;
 
         double[] state = StateEncoder.encode(mob.worldObj, mob);
         ActionType action = mob.moveForward > 0.0F ? ActionType.MOVE_FORWARD : ActionType.MINE_BLOCK;
@@ -2430,6 +2449,7 @@ public class BotPlayerAI {
 
         MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
         if (server == null || BotPlayerManager.hasRealPlayerOnline(server)) return;
+        if (!isGoodStateForSelfPlay(mob)) return;
 
         BrainManager.instance.recordSelfSample(state, action);
     }

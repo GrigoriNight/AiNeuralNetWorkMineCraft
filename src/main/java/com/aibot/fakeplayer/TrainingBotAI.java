@@ -40,6 +40,8 @@ public class TrainingBotAI {
     /** Long stretches in one direction, changed rarely - this is what actually gets them out to new caves/structures/trees instead of circling near spawn. */
     private static final int DIRECTION_CHANGE_TICKS = 400;
     private static final int SAMPLE_INTERVAL_TICKS = 40;
+    /** Below this, skip self-play recording - same "don't teach it to imitate a bad moment" reasoning as BotPlayerAI.isGoodStateForSelfPlay. */
+    private static final float LOW_HEALTH_SKIP_THRESHOLD = 6.0F;
     private static final float ATTACK_DAMAGE = 3.0F;
 
     @SubscribeEvent
@@ -187,6 +189,7 @@ public class TrainingBotAI {
         mob.trainingSampleCooldown--;
         if (mob.trainingSampleCooldown > 0) return;
         mob.trainingSampleCooldown = SAMPLE_INTERVAL_TICKS;
+        if (mob.getHealth() <= LOW_HEALTH_SKIP_THRESHOLD) return;
 
         double[] state = StateEncoder.encode(mob.worldObj, mob);
         BrainManager.instance.recordSelfSample(state, action);
