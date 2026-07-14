@@ -18,7 +18,12 @@ import java.util.Random;
  */
 public class BrainDataset {
 
-    private static final int MAX_SAMPLES = 20000;
+    // Raised from 20,000 (2026-07-14) - the dataset was sitting permanently at
+    // the old cap, meaning real human-derived samples were already being
+    // evicted FIFO to make room for new ones. Each sample is tiny (a
+    // STATE_SIZE-length double[] plus a label, ~200 bytes), so even a 5x
+    // increase is trivial memory (a few MB) on a server with GBs of headroom.
+    private static final int MAX_SAMPLES = 100000;
     private static final double MAX_SELF_GENERATED_FRACTION = 0.15;
 
     // Bumped whenever the on-disk sample format changes. A file written by an

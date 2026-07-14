@@ -1771,6 +1771,8 @@ public class BotPlayerAI {
      * yields zero food - sheep are tryGetWool's job specifically.
      */
     private boolean tryHuntFood(BotPlayer mob) {
+        if (mob.pursuitSuppressedTicks > 0) return false;
+
         // A queued "hunt food" goal overrides the normal hunger gating below -
         // same reasoning as tryGetWool's woolGoalActive check.
         Goal activeGoal = BotPlayerManager.peekActiveGoal();
@@ -2233,6 +2235,19 @@ public class BotPlayerAI {
      * brand-new, not-yet-live-tested system stays contained to one place.
      */
     private boolean followPathOrStraightLine(BotPlayer mob, double goalX, double goalY, double goalZ) {
+        // Missing this was a real, confirmed-live bug (2026-07-14): every other
+        // "walk toward a distant target" method (tryReturnHome, trySeekAndKillMob,
+        // tryFollow, tryDepositOre) already skips its turn while a hazard-avoidance
+        // reroute is active, specifically to stop it immediately turning back and
+        // fighting that reroute every single tick - this method was the one place
+        // that pattern was never applied, and it's the one every long-distance goal
+        // (tryBuildBase, tryBuildSchematic) funnels through. Confirmed live: a bot
+        // stuck oscillating in a ~2-block box for minutes while its A* search (only
+        // a 48-block radius) could never reach a goal hundreds of blocks away and
+        // fell back to this straight-line walk every tick, fighting handleStuck's
+        // own reroute the entire time.
+        if (mob.pursuitSuppressedTicks > 0) return false;
+
         int gx = MathHelper.floor_double(goalX);
         int gy = MathHelper.floor_double(goalY);
         int gz = MathHelper.floor_double(goalZ);
