@@ -452,7 +452,17 @@ public class BotPlayerAI {
         if (inRange) {
             mob.moveStrafing = 0.0F;
             mob.moveForward = 0.0F;
-            if (mob.retaliateAttackCooldown <= 0) {
+            // !isUsingItem() specifically here (not just in switchToTool) - confirmed
+            // live as a real bug (2026-07-14): food stuck at 0 and never recovering
+            // even with edible items in inventory, because retaliation kept
+            // swinging/landing a hit every time a hostile mob was nearby, and
+            // vanilla cancels an in-progress eat the instant the player attacks -
+            // switchToTool already refused to change weapons mid-eat, but the swing
+            // and the actual hit still went through regardless, silently aborting
+            // the eat every time. Skipping the attack itself (not just the weapon
+            // switch) while eating lets the ~1.6s bite finish before resuming
+            // combat - an acceptable trade since this bot can't actually die.
+            if (mob.retaliateAttackCooldown <= 0 && !mob.isUsingItem()) {
                 switchToTool(mob, ItemSword.class);
                 mob.swingItem();
                 target.attackEntityFrom(DamageSource.causePlayerDamage(mob), currentAttackDamage(mob));
@@ -692,7 +702,10 @@ public class BotPlayerAI {
         if (distSq <= RETALIATE_ATTACK_RANGE * RETALIATE_ATTACK_RANGE) {
             mob.moveStrafing = 0.0F;
             mob.moveForward = 0.0F;
-            if (mob.retaliateAttackCooldown <= 0) {
+            // See tryRetaliate's comment - skip the attack itself (not just the
+            // weapon switch) while an eat is in progress, so proactively engaging a
+            // mob can't silently cancel it.
+            if (mob.retaliateAttackCooldown <= 0 && !mob.isUsingItem()) {
                 switchToTool(mob, ItemSword.class);
                 mob.swingItem();
                 target.attackEntityFrom(DamageSource.causePlayerDamage(mob), currentAttackDamage(mob));
@@ -1095,6 +1108,7 @@ public class BotPlayerAI {
     }
 
     private void breakIfBreakable(BotPlayer mob, int x, int y, int z) {
+        if (mob.isUsingItem()) return; // see tryRetaliate's comment - don't cancel an in-progress eat
         Block block = mob.worldObj.getBlock(x, y, z);
         if (block.getMaterial() == Material.air) return;
         if (isHazardousBlock(block)) return;
@@ -1301,6 +1315,7 @@ public class BotPlayerAI {
     }
 
     private boolean tryGatherWood(BotPlayer mob) {
+        if (mob.isUsingItem()) return false; // see tryRetaliate's comment - don't cancel an in-progress eat
         if (mob.hasGatherTarget) {
             int tx = MathHelper.floor_double(mob.gatherTargetX);
             int ty = MathHelper.floor_double(mob.gatherTargetY);
@@ -1367,6 +1382,7 @@ public class BotPlayerAI {
      * until it actually has one.
      */
     private boolean tryMineOre(BotPlayer mob) {
+        if (mob.isUsingItem()) return false; // see tryRetaliate's comment - don't cancel an in-progress eat
         if (findItemStack(mob, Items.diamond_pickaxe) == null) return false;
 
         if (mob.hasOreTarget) {
@@ -1598,6 +1614,8 @@ public class BotPlayerAI {
      * any pickaxe works via the existing harvestToolClassFor selection.
      */
     private boolean tryGatherStone(BotPlayer mob) {
+        if (mob.isUsingItem()) return false; // see tryRetaliate's comment - don't cancel an in-progress eat
+
         // Stone requires a pickaxe to actually drop cobblestone in vanilla -
         // without this gate the bot would "mine" stone forever using whatever
         // was currently held (a sword, bare hands) and get nothing for it, same
@@ -1722,7 +1740,8 @@ public class BotPlayerAI {
         if (distSq <= RETALIATE_ATTACK_RANGE * RETALIATE_ATTACK_RANGE) {
             mob.moveStrafing = 0.0F;
             mob.moveForward = 0.0F;
-            if (mob.retaliateAttackCooldown <= 0) {
+            // See tryRetaliate's comment - skip the attack itself while eating.
+            if (mob.retaliateAttackCooldown <= 0 && !mob.isUsingItem()) {
                 switchToTool(mob, ItemSword.class);
                 mob.swingItem();
                 target.attackEntityFrom(DamageSource.causePlayerDamage(mob), currentAttackDamage(mob));
@@ -1796,7 +1815,12 @@ public class BotPlayerAI {
         if (distSq <= RETALIATE_ATTACK_RANGE * RETALIATE_ATTACK_RANGE) {
             mob.moveStrafing = 0.0F;
             mob.moveForward = 0.0F;
-            if (mob.retaliateAttackCooldown <= 0) {
+            // See tryRetaliate's comment - skip the attack itself while eating. A
+            // bit ironic here specifically (hunting food while already mid-eat
+            // shouldn't happen anyway, since hasAnyFood/food-level gating above
+            // should already prevent starting a hunt while there's food to eat),
+            // but kept for consistency/defense-in-depth with every other attack site.
+            if (mob.retaliateAttackCooldown <= 0 && !mob.isUsingItem()) {
                 switchToTool(mob, ItemSword.class);
                 mob.swingItem();
                 target.attackEntityFrom(DamageSource.causePlayerDamage(mob), currentAttackDamage(mob));
@@ -2141,6 +2165,7 @@ public class BotPlayerAI {
      * step is retried automatically next time this tier is reached.
      */
     private boolean tryBuildSchematic(BotPlayer mob) {
+        if (mob.isUsingItem()) return false; // see tryRetaliate's comment - don't cancel an in-progress eat
         if (mob.dimension != BotPlayerManager.getSchematicDimension()) return false;
 
         String activeName = BotPlayerManager.getSchematicName();
@@ -2844,6 +2869,8 @@ public class BotPlayerAI {
     }
 
     private void mineAhead(BotPlayer mob) {
+        if (mob.isUsingItem()) return; // see tryRetaliate's comment - don't cancel an in-progress eat
+
         Vec3 look = mob.getLookVec();
         int x = MathHelper.floor_double(mob.posX + look.xCoord * 1.5);
         int y = MathHelper.floor_double(mob.posY + mob.getEyeHeight() + look.yCoord * 1.5);
@@ -2896,6 +2923,8 @@ public class BotPlayerAI {
     }
 
     private void attackNearby(BotPlayer mob) {
+        if (mob.isUsingItem()) return; // see tryRetaliate's comment - don't cancel an in-progress eat
+
         @SuppressWarnings("unchecked")
         List<EntityLivingBase> nearby = mob.worldObj.getEntitiesWithinAABB(EntityLivingBase.class, mob.boundingBox.expand(1.5, 1.0, 1.5));
         for (EntityLivingBase other : nearby) {
