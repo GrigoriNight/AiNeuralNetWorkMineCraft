@@ -14,6 +14,7 @@ import com.aibot.schematic.SchematicManager;
 import com.aibot.schematic.SchematicSelection;
 import com.aibot.schematic.SchematicTool;
 import com.aibot.web.ChatAI;
+import com.aibot.web.DiscordBotBridge;
 import com.aibot.web.DiscordWebhook;
 import com.aibot.web.WebDashboardServer;
 import cpw.mods.fml.common.FMLCommonHandler;
@@ -51,7 +52,7 @@ public class CommandBrain extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/brain <spawn|spawnplayer|despawnplayer/hide|rename <name>|sleep|home|follow [player]|unfollow|copy|mine|gui|items|equip|status|base|scan|weburl|apikey|save|load|stats|test|goal <wood|stone|ore|wool|food> <amount>|goals|goal clear|schem <tool|pos1|pos2|save <name>|list|build <name> [x z]>|trainingbots|webhook <url>|off|test|chat|chat model <name>|chat url <url>>";
+        return "/brain <spawn|spawnplayer|despawnplayer/hide|rename <name>|sleep|home|follow [player]|unfollow|copy|mine|gui|items|equip|status|base|scan|weburl|apikey|save|load|stats|test|goal <wood|stone|ore|wool|food> <amount>|goals|goal clear|schem <tool|pos1|pos2|save <name>|list|build <name> [x z]>|trainingbots|webhook <url>|off|test|discordbot <token> <channelId>|off|chat|chat model <name>|chat url <url>>";
     }
 
     @Override
@@ -461,6 +462,25 @@ public class CommandBrain extends CommandBase {
                 sender.addChatMessage(new ChatComponentText("Discord webhook set - status posts every 5 minutes now, "
                         + "plus any new errors. /brain webhook test to check it works, /brain webhook off to disable."));
             }
+        } else if (sub.equals("discordbot")) {
+            if (args.length < 2) {
+                sender.addChatMessage(new ChatComponentText("Usage: /brain discordbot <token> <channelId>, or /brain discordbot off"));
+                return;
+            }
+            if (args[1].equalsIgnoreCase("off")) {
+                DiscordBotBridge.setEnabled(false);
+                sender.addChatMessage(new ChatComponentText("Discord command bridge disabled."));
+                return;
+            }
+            if (args.length < 3) {
+                sender.addChatMessage(new ChatComponentText("Usage: /brain discordbot <token> <channelId>"));
+                return;
+            }
+            DiscordBotBridge.configure(args[1], args[2]);
+            sender.addChatMessage(new ChatComponentText("Discord command bridge enabled - messages starting with ! in that channel "
+                    + "will now run as /brain commands (e.g. \"!status\"), checked every 15 seconds. "
+                    + "Anyone who can post in that channel can control the bot this way - keep it private. "
+                    + "/brain discordbot off to disable."));
         } else if (sub.equals("chat")) {
             if (args.length >= 3 && args[1].equalsIgnoreCase("model")) {
                 ChatAI.setModel(args[2]);

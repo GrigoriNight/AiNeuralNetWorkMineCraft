@@ -11,6 +11,7 @@ import com.aibot.fakeplayer.TrainingBotAI;
 import com.aibot.fakeplayer.TrainingBotManager;
 import com.aibot.web.ChatAI;
 import com.aibot.web.ChatLog;
+import com.aibot.web.DiscordBotBridge;
 import com.aibot.web.DiscordStatusPusher;
 import com.aibot.web.DiscordWebhook;
 import com.aibot.web.MainThreadScheduler;
@@ -56,6 +57,7 @@ public class AIBotMod {
         FMLCommonHandler.instance().bus().register(new TrainingBotAI());
         FMLCommonHandler.instance().bus().register(new MainThreadScheduler());
         FMLCommonHandler.instance().bus().register(new DiscordStatusPusher());
+        FMLCommonHandler.instance().bus().register(new DiscordBotBridge());
     }
 
     @Mod.EventHandler
@@ -70,6 +72,7 @@ public class AIBotMod {
         BotPlayerManager.loadSchematicProgress();
         TrainingBotManager.loadEnabled();
         DiscordWebhook.load();
+        DiscordBotBridge.load();
         webDashboard.start();
     }
 
