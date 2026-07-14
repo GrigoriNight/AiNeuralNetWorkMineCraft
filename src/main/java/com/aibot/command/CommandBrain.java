@@ -14,6 +14,7 @@ import com.aibot.schematic.SchematicManager;
 import com.aibot.schematic.SchematicSelection;
 import com.aibot.schematic.SchematicTool;
 import com.aibot.web.ChatAI;
+import com.aibot.web.DiscordWebhook;
 import com.aibot.web.WebDashboardServer;
 import cpw.mods.fml.common.FMLCommonHandler;
 import net.minecraft.block.Block;
@@ -50,7 +51,7 @@ public class CommandBrain extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/brain <spawn|spawnplayer|despawnplayer/hide|rename <name>|sleep|home|follow [player]|unfollow|copy|mine|gui|items|equip|status|base|scan|weburl|apikey|save|load|stats|test|goal <wood|stone|ore|wool|food> <amount>|goals|goal clear|schem <tool|pos1|pos2|save <name>|list|build <name> [x z]>|trainingbots|chat|chat model <name>|chat url <url>>";
+        return "/brain <spawn|spawnplayer|despawnplayer/hide|rename <name>|sleep|home|follow [player]|unfollow|copy|mine|gui|items|equip|status|base|scan|weburl|apikey|save|load|stats|test|goal <wood|stone|ore|wool|food> <amount>|goals|goal clear|schem <tool|pos1|pos2|save <name>|list|build <name> [x z]>|trainingbots|webhook <url>|off|test|chat|chat model <name>|chat url <url>>";
     }
 
     @Override
@@ -436,6 +437,30 @@ public class CommandBrain extends CommandBase {
                     : "Training bots disabled and removed - only " + BotPlayerManager.getBotName() + " will be around now. "
                         + "They'll still spawn back in temporarily if " + BotPlayerManager.getBotName() + " gets attacked and needs backup, then leave again once it's safe. "
                         + "Run /brain trainingbots again to re-enable them fully."));
+        } else if (sub.equals("webhook")) {
+            if (args.length < 2) {
+                sender.addChatMessage(new ChatComponentText("Usage: /brain webhook <url>|off|test"));
+                return;
+            }
+            String webhookAction = args[1].toLowerCase();
+            if (webhookAction.equals("off")) {
+                DiscordWebhook.setEnabled(false);
+                sender.addChatMessage(new ChatComponentText("Discord status updates disabled."));
+            } else if (webhookAction.equals("test")) {
+                if (!DiscordWebhook.isEnabled()) {
+                    sender.addChatMessage(new ChatComponentText("No webhook configured yet - /brain webhook <url> first."));
+                    return;
+                }
+                DiscordWebhook.send("Test message from " + BotPlayerManager.getBotName() + " - if you see this, the webhook works.");
+                sender.addChatMessage(new ChatComponentText("Test message sent - check Discord in a few seconds."));
+            } else {
+                // Only a plain URL is accepted here, straight from Discord's own
+                // "Copy Webhook URL" button - no other page/script content, see the
+                // explanation given when a full HTML page was pasted instead earlier.
+                DiscordWebhook.setUrl(args[1]);
+                sender.addChatMessage(new ChatComponentText("Discord webhook set - status posts every 5 minutes now, "
+                        + "plus any new errors. /brain webhook test to check it works, /brain webhook off to disable."));
+            }
         } else if (sub.equals("chat")) {
             if (args.length >= 3 && args[1].equalsIgnoreCase("model")) {
                 ChatAI.setModel(args[2]);

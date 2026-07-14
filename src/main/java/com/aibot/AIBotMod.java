@@ -11,6 +11,8 @@ import com.aibot.fakeplayer.TrainingBotAI;
 import com.aibot.fakeplayer.TrainingBotManager;
 import com.aibot.web.ChatAI;
 import com.aibot.web.ChatLog;
+import com.aibot.web.DiscordStatusPusher;
+import com.aibot.web.DiscordWebhook;
 import com.aibot.web.MainThreadScheduler;
 import com.aibot.web.WebDashboardServer;
 import cpw.mods.fml.common.FMLCommonHandler;
@@ -53,6 +55,7 @@ public class AIBotMod {
         MinecraftForge.EVENT_BUS.register(new TrainingBotAI());
         FMLCommonHandler.instance().bus().register(new TrainingBotAI());
         FMLCommonHandler.instance().bus().register(new MainThreadScheduler());
+        FMLCommonHandler.instance().bus().register(new DiscordStatusPusher());
     }
 
     @Mod.EventHandler
@@ -66,6 +69,7 @@ public class AIBotMod {
         BotPlayerManager.loadKnownPlayerBases();
         BotPlayerManager.loadSchematicProgress();
         TrainingBotManager.loadEnabled();
+        DiscordWebhook.load();
         webDashboard.start();
     }
 

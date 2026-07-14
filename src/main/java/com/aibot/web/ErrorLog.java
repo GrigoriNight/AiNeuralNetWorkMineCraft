@@ -16,6 +16,8 @@ public class ErrorLog {
 
     private static final int MAX_ENTRIES = 50;
     private static final LinkedList<Entry> entries = new LinkedList<Entry>();
+    /** Monotonic count of every error ever recorded (unlike entries, never shrinks) - lets a consumer like DiscordStatusPusher tell how many are new since it last checked, even after the ring buffer has evicted some. */
+    private static long totalRecorded = 0;
 
     public static synchronized void record(String context, Throwable t) {
         StringWriter sw = new StringWriter();
@@ -31,12 +33,17 @@ public class ErrorLog {
         while (entries.size() > MAX_ENTRIES) {
             entries.removeFirst();
         }
+        totalRecorded++;
 
         t.printStackTrace();
     }
 
     public static synchronized List<Entry> getRecent() {
         return new LinkedList<Entry>(entries);
+    }
+
+    public static synchronized long getTotalRecorded() {
+        return totalRecorded;
     }
 
     public static class Entry {
