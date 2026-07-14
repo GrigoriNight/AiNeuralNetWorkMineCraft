@@ -8,6 +8,11 @@ import com.aibot.fakeplayer.BotPlayer;
 import com.aibot.fakeplayer.BotPlayerManager;
 import com.aibot.fakeplayer.Goal;
 import com.aibot.fakeplayer.GoalType;
+import com.aibot.fakeplayer.TrainingBotManager;
+import com.aibot.schematic.Schematic;
+import com.aibot.schematic.SchematicManager;
+import com.aibot.schematic.SchematicSelection;
+import com.aibot.schematic.SchematicTool;
 import com.aibot.web.ChatAI;
 import com.aibot.web.WebDashboardServer;
 import cpw.mods.fml.common.FMLCommonHandler;
@@ -35,6 +40,9 @@ import java.util.List;
 
 public class CommandBrain extends CommandBase {
 
+    /** /brain schem save's max region size per axis - see the size check where it's used for why this exists. */
+    private static final int MAX_SCHEMATIC_DIMENSION = 48;
+
     @Override
     public String getCommandName() {
         return "brain";
@@ -42,7 +50,7 @@ public class CommandBrain extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/brain <spawn|spawnplayer|despawnplayer/hide|rename <name>|sleep|home|follow [player]|unfollow|copy|mine|gui|items|equip|status|base|scan|weburl|apikey|save|load|stats|test|goal <wood|stone|ore|wool|food> <amount>|goals|goal clear|chat|chat model <name>|chat url <url>>";
+        return "/brain <spawn|spawnplayer|despawnplayer/hide|rename <name>|sleep|home|follow [player]|unfollow|copy|mine|gui|items|equip|status|base|scan|weburl|apikey|save|load|stats|test|goal <wood|stone|ore|wool|food> <amount>|goals|goal clear|schem <tool|pos1|pos2|save <name>|list|build <name> [x z]>|trainingbots|chat|chat model <name>|chat url <url>>";
     }
 
     @Override
@@ -311,6 +319,123 @@ public class CommandBrain extends CommandBase {
                 if (i == 0) sb.append(" [").append(BotPlayerManager.getGoalProgress()).append("/").append(goals.get(i).targetAmount).append("]");
             }
             sender.addChatMessage(new ChatComponentText(sb.toString()));
+        } else if (sub.equals("schem")) {
+            if (!(sender instanceof EntityPlayer)) {
+                sender.addChatMessage(new ChatComponentText("Only a player can use /brain schem."));
+                return;
+            }
+            EntityPlayer player = (EntityPlayer) sender;
+            if (args.length < 2) {
+                sender.addChatMessage(new ChatComponentText("Usage: /brain schem <tool|pos1|pos2|save <name>|list|build <name> [x z]>"));
+                return;
+            }
+            String action = args[1].toLowerCase();
+
+            if (action.equals("tool")) {
+                ItemStack tool = SchematicTool.createToolStack();
+                if (!player.inventory.addItemStackToInventory(tool)) {
+                    player.entityDropItem(tool, 0.5F);
+                }
+                sender.addChatMessage(new ChatComponentText("Gave you the " + SchematicTool.TOOL_NAME + " wand - right-click a block for corner 1, left-click for corner 2, then /brain schem save <name>."));
+            } else if (action.equals("pos1")) {
+                SchematicSelection.setPos1(player.getCommandSenderName(),
+                        MathHelper.floor_double(player.posX), MathHelper.floor_double(player.posY), MathHelper.floor_double(player.posZ));
+                sender.addChatMessage(new ChatComponentText("Schematic corner 1 set at your position."));
+            } else if (action.equals("pos2")) {
+                SchematicSelection.setPos2(player.getCommandSenderName(),
+                        MathHelper.floor_double(player.posX), MathHelper.floor_double(player.posY), MathHelper.floor_double(player.posZ));
+                sender.addChatMessage(new ChatComponentText("Schematic corner 2 set at your position."));
+            } else if (action.equals("save")) {
+                if (args.length < 3) {
+                    sender.addChatMessage(new ChatComponentText("Usage: /brain schem save <name>"));
+                    return;
+                }
+                // The name goes straight into a file path (SchematicManager saves to
+                // <name>.schem) - reject anything that isn't a plain identifier so a
+                // stray "/" or ".." in the argument can't write outside the intended
+                // schematics folder. This command needs op permission already, but a
+                // typo shouldn't be able to write somewhere unexpected regardless.
+                if (!args[2].matches("[A-Za-z0-9_-]+")) {
+                    sender.addChatMessage(new ChatComponentText("Schematic name can only contain letters, numbers, - and _."));
+                    return;
+                }
+                int[] p1 = SchematicSelection.getPos1(player.getCommandSenderName());
+                int[] p2 = SchematicSelection.getPos2(player.getCommandSenderName());
+                if (p1 == null || p2 == null) {
+                    sender.addChatMessage(new ChatComponentText("Set both corners first - use the " + SchematicTool.TOOL_NAME + " wand (/brain schem tool) or /brain schem pos1 / pos2."));
+                    return;
+                }
+                // Capture runs synchronously on the server's main tick thread (like
+                // every Minecraft command) - an unbounded region (e.g. two corners
+                // accidentally marked hundreds of blocks apart) would scan millions
+                // of blocks in one tick and hang the live server for everyone, not
+                // just this player. Same per-axis size a small house/room comfortably
+                // fits in, well under WorldEdit-style limits.
+                int spanX = Math.abs(p1[0] - p2[0]) + 1;
+                int spanY = Math.abs(p1[1] - p2[1]) + 1;
+                int spanZ = Math.abs(p1[2] - p2[2]) + 1;
+                int maxSpan = Math.max(spanX, Math.max(spanY, spanZ));
+                if (maxSpan > MAX_SCHEMATIC_DIMENSION) {
+                    sender.addChatMessage(new ChatComponentText("Selection too big (" + spanX + "x" + spanY + "x" + spanZ
+                            + ", max " + MAX_SCHEMATIC_DIMENSION + " per side) - mark two closer corners and try again."));
+                    return;
+                }
+                Schematic schem = SchematicManager.capture(player.worldObj, p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], args[2]);
+                SchematicManager.save(schem);
+                sender.addChatMessage(new ChatComponentText("Saved schematic '" + args[2] + "' (" + schem.blocks.size() + " blocks)."));
+            } else if (action.equals("list")) {
+                List<String> names = SchematicManager.listNames();
+                if (names.isEmpty()) {
+                    sender.addChatMessage(new ChatComponentText("No saved schematics yet - use /brain schem pos1, pos2, then save <name>."));
+                    return;
+                }
+                StringBuilder sb = new StringBuilder("Saved schematics: ");
+                for (int i = 0; i < names.size(); i++) {
+                    if (i > 0) sb.append(", ");
+                    sb.append(names.get(i));
+                }
+                sender.addChatMessage(new ChatComponentText(sb.toString()));
+            } else if (action.equals("build")) {
+                if (args.length < 3) {
+                    sender.addChatMessage(new ChatComponentText("Usage: /brain schem build <name> [x z]"));
+                    return;
+                }
+                String name = args[2];
+                if (SchematicManager.load(name) == null) {
+                    sender.addChatMessage(new ChatComponentText("No saved schematic named '" + name + "' - check /brain schem list."));
+                    return;
+                }
+                BotPlayer bot = BotPlayerManager.getActive();
+                if (bot == null) {
+                    sender.addChatMessage(new ChatComponentText("No brain bot is currently active."));
+                    return;
+                }
+                double x, z;
+                if (args.length >= 5) {
+                    try {
+                        x = Double.parseDouble(args[3]);
+                        z = Double.parseDouble(args[4]);
+                    } catch (NumberFormatException e) {
+                        sender.addChatMessage(new ChatComponentText("x/z must be numbers."));
+                        return;
+                    }
+                } else {
+                    x = player.posX;
+                    z = player.posZ;
+                }
+                BotPlayerManager.startSchematicBuild(name, x, z, player.dimension);
+                sender.addChatMessage(new ChatComponentText(BotPlayerManager.getBotName() + " will build '" + name + "' near " + (int) x + ", " + (int) z + "."));
+            } else {
+                sender.addChatMessage(new ChatComponentText("Usage: /brain schem <tool|pos1|pos2|save <name>|list|build <name> [x z]>"));
+            }
+        } else if (sub.equals("trainingbots")) {
+            boolean newState = !TrainingBotManager.isEnabled();
+            TrainingBotManager.setEnabled(newState);
+            sender.addChatMessage(new ChatComponentText(newState
+                    ? "Training bots re-enabled - up to " + TrainingBotManager.MAX_TRAINING_BOTS + " will spawn back in whenever nobody real is online."
+                    : "Training bots disabled and removed - only " + BotPlayerManager.getBotName() + " will be around now. "
+                        + "They'll still spawn back in temporarily if " + BotPlayerManager.getBotName() + " gets attacked and needs backup, then leave again once it's safe. "
+                        + "Run /brain trainingbots again to re-enable them fully."));
         } else if (sub.equals("chat")) {
             if (args.length >= 3 && args[1].equalsIgnoreCase("model")) {
                 ChatAI.setModel(args[2]);

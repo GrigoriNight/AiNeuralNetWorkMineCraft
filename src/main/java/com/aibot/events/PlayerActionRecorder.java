@@ -5,16 +5,21 @@ import com.aibot.brain.BrainManager;
 import com.aibot.brain.StateEncoder;
 import com.aibot.fakeplayer.BotPlayer;
 import com.aibot.fakeplayer.BotPlayerManager;
+import com.aibot.schematic.SchematicSelection;
+import com.aibot.schematic.SchematicTool;
 import com.aibot.web.ChatAI;
 import com.aibot.web.ChatLog;
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.PlayerEvent;
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.item.ItemStack;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.util.ChatComponentText;
 import net.minecraftforge.event.ServerChatEvent;
 import net.minecraftforge.event.entity.living.LivingEvent.LivingUpdateEvent;
 import net.minecraftforge.event.entity.player.AttackEntityEvent;
+import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.event.entity.player.PlayerSleepInBedEvent;
 import net.minecraftforge.event.world.BlockEvent;
 
@@ -42,6 +47,57 @@ public class PlayerActionRecorder {
     private final Map<UUID, PositionSnapshot> lastPositions = new HashMap<UUID, PositionSnapshot>();
     private final Map<UUID, Integer> tickCounters = new HashMap<UUID, Integer>();
     private final Map<UUID, Integer> consecutiveIdleCounts = new HashMap<UUID, Integer>();
+
+    /**
+     * The ToolAI wand (a plain stick with a custom name, see SchematicTool) - right-
+     * click a block to mark schematic corner 1, left-click to mark corner 2, same
+     * effect as /brain schem pos1/pos2 but by clicking instead of typing. Cancels
+     * the event so the wand never also breaks/places a real block while in use.
+     *
+     * Cancelling LEFT_CLICK_BLOCK specifically means the client never sees the
+     * block actually start breaking, so vanilla's normal digging-in-progress
+     * packets keep coming while the mouse stays held down - refiring this event
+     * several times a second for what a player experiences as one click. Each
+     * branch below is a no-op if the new coordinates match what's already
+     * stored, so that only produces one chat message instead of a spam of
+     * identical "corner set" lines.
+     */
+    @SubscribeEvent
+    public void onPlayerInteract(PlayerInteractEvent event) {
+        if (event.entityPlayer == null || event.entityPlayer instanceof BotPlayer) return;
+        if (event.action != PlayerInteractEvent.Action.RIGHT_CLICK_BLOCK
+                && event.action != PlayerInteractEvent.Action.LEFT_CLICK_BLOCK) {
+            return;
+        }
+        ItemStack held = event.entityPlayer.getHeldItem();
+        if (!SchematicTool.isToolAI(held)) return;
+
+        String name = event.entityPlayer.getCommandSenderName();
+        if (event.action == PlayerInteractEvent.Action.RIGHT_CLICK_BLOCK) {
+            int[] existing = SchematicSelection.getPos1(name);
+            if (isSamePos(existing, event.x, event.y, event.z)) {
+                event.setCanceled(true);
+                return;
+            }
+            SchematicSelection.setPos1(name, event.x, event.y, event.z);
+            event.entityPlayer.addChatMessage(new ChatComponentText(
+                    SchematicTool.TOOL_NAME + ": corner 1 set at " + event.x + ", " + event.y + ", " + event.z));
+        } else {
+            int[] existing = SchematicSelection.getPos2(name);
+            if (isSamePos(existing, event.x, event.y, event.z)) {
+                event.setCanceled(true);
+                return;
+            }
+            SchematicSelection.setPos2(name, event.x, event.y, event.z);
+            event.entityPlayer.addChatMessage(new ChatComponentText(
+                    SchematicTool.TOOL_NAME + ": corner 2 set at " + event.x + ", " + event.y + ", " + event.z));
+        }
+        event.setCanceled(true);
+    }
+
+    private boolean isSamePos(int[] existing, int x, int y, int z) {
+        return existing != null && existing[0] == x && existing[1] == y && existing[2] == z;
+    }
 
     @SubscribeEvent
     public void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {

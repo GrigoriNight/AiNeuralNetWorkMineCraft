@@ -7,6 +7,14 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.ChunkCoordinates;
 import net.minecraft.world.WorldServer;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -26,6 +34,75 @@ public class TrainingBotManager {
     public static final int MAX_TRAINING_BOTS = 16;
 
     private static final List<BotPlayer> trainingBots = new ArrayList<BotPlayer>();
+
+    /**
+     * Player-controlled intent (/brain trainingbots), persisted across restarts
+     * same as BotPlayerManager's other *Intent flags (miningModeIntent, etc.) -
+     * an earlier bug in this project (mining mode silently resetting on restart)
+     * came from exactly this kind of flag NOT being saved, so this one is from
+     * the start. Even while false, BotPlayerAutoSpawner still lets them spawn
+     * back in temporarily if Direwolf20 is under attack (see isDirewolfUnderAttack)
+     * - "off" means "don't ambiently spawn for training", not "never help".
+     */
+    private static boolean enabled = true;
+
+    public static boolean isEnabled() {
+        return enabled;
+    }
+
+    public static void setEnabled(boolean value) {
+        enabled = value;
+        if (!enabled) {
+            despawnAll();
+        }
+        saveEnabled();
+    }
+
+    public static void saveEnabled() {
+        DataOutputStream out = null;
+        try {
+            out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(new File(getSaveDir(), "trainingbots.dat"))));
+            out.writeBoolean(enabled);
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (out != null) {
+                try {
+                    out.close();
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    public static void loadEnabled() {
+        File file = new File(getSaveDir(), "trainingbots.dat");
+        if (!file.exists()) return;
+
+        DataInputStream in = null;
+        try {
+            in = new DataInputStream(new BufferedInputStream(new FileInputStream(file)));
+            enabled = in.readBoolean();
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    private static File getSaveDir() {
+        MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+        File dir = server != null ? server.getFile("aibot") : new File("aibot");
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        return dir;
+    }
 
     public static List<BotPlayer> getTrainingBots() {
         return trainingBots;

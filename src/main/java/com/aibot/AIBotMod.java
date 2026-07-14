@@ -8,6 +8,7 @@ import com.aibot.fakeplayer.BotPlayerAI;
 import com.aibot.fakeplayer.BotPlayerAutoSpawner;
 import com.aibot.fakeplayer.BotPlayerManager;
 import com.aibot.fakeplayer.TrainingBotAI;
+import com.aibot.fakeplayer.TrainingBotManager;
 import com.aibot.web.ChatAI;
 import com.aibot.web.ChatLog;
 import com.aibot.web.MainThreadScheduler;
@@ -63,6 +64,8 @@ public class AIBotMod {
         BotPlayerManager.loadBaseProgress();
         BotPlayerManager.loadGoals();
         BotPlayerManager.loadKnownPlayerBases();
+        BotPlayerManager.loadSchematicProgress();
+        TrainingBotManager.loadEnabled();
         webDashboard.start();
     }
 
@@ -76,6 +79,7 @@ public class AIBotMod {
         ChatLog.save();
         BotPlayerManager.saveBaseProgress();
         BotPlayerManager.saveGoals();
+        BotPlayerManager.saveSchematicProgress();
         webDashboard.stop();
     }
 }

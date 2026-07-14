@@ -1,6 +1,7 @@
 package com.aibot.fakeplayer;
 
 import com.aibot.brain.ActionType;
+import com.aibot.schematic.Schematic;
 import com.mojang.authlib.GameProfile;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.MinecraftServer;
@@ -84,6 +85,18 @@ public class BotPlayer extends EntityPlayerMP {
     public int totalStuckTicks = 0;
     public int samePredictionStreak = 0;
     public int structureDetectCooldown = 0;
+    /** Gates how often the idle-fallback chain checks whether to start an autonomous schematic build - see BotPlayerAI.maybeStartAutonomousSchematicBuild. */
+    public int autoSchemCheckCooldown = 0;
+
+    /**
+     * In-memory cache of the currently-active schematic build's parsed blueprint -
+     * without this, tryBuildSchematic would call SchematicManager.load() (real
+     * disk I/O: open file, read every block entry, close) on every single tick
+     * for the entire duration of a build, which could run for minutes. Reloaded
+     * only when the active schematic's name changes (see tryBuildSchematic).
+     */
+    public Schematic cachedSchematic = null;
+    public String cachedSchematicName = null;
 
     /** Real A* pathfinding waypoints (see Pathfinder) - null/empty means no path currently being followed, and callers should fall back to their own straight-line walk. */
     public java.util.List<net.minecraft.util.ChunkCoordinates> currentPath = null;

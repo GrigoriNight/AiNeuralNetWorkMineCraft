@@ -4,6 +4,7 @@ import com.aibot.web.ErrorLog;
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
+import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.WorldServer;
 
@@ -42,13 +43,19 @@ public class BotPlayerAutoSpawner {
         // Extra self-play-only training bots (per explicit "make 16 extra bots
         // until a real player joins" request) - independent of the main bot's
         // flee-respawn cooldown below, since they have nothing to do with it.
+        // /brain trainingbots can turn off their ambient spawning entirely
+        // (isEnabled() false), but even then they're allowed back in
+        // temporarily as backup while Direwolf20 is under attack - "off" means
+        // "don't keep them around just for training", not "never help".
         if (BotPlayerManager.hasRealPlayerOnline(server)) {
             TrainingBotManager.despawnAll();
-        } else {
+        } else if (TrainingBotManager.isEnabled() || isDirewolfUnderAttack()) {
             WorldServer trainingWorld = server.worldServerForDimension(0);
             if (trainingWorld != null) {
                 TrainingBotManager.spawnAllIfNeeded(trainingWorld);
             }
+        } else {
+            TrainingBotManager.despawnAll();
         }
 
         // While a flee-respawn is counting down, skip auto-spawn entirely so its
@@ -72,5 +79,13 @@ public class BotPlayerAutoSpawner {
                 BotPlayerManager.spawn(world);
             }
         }
+    }
+
+    /** Same "who last hit it" check tryRetaliate uses - true while Direwolf20 has a live hostile target, i.e. is actively fighting back. */
+    private boolean isDirewolfUnderAttack() {
+        BotPlayer active = BotPlayerManager.getActive();
+        if (active == null) return false;
+        EntityLivingBase target = active.getAITarget();
+        return target != null && target.isEntityAlive();
     }
 }

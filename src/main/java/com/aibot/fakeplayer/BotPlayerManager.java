@@ -453,6 +453,139 @@ public class BotPlayerManager {
         }
     }
 
+    /**
+     * A player-commanded or self-play-chosen schematic build in progress - same
+     * "kept on the manager, not on BotPlayer" reasoning as the base-build fields
+     * above (survives despawn/respawn, persisted to disk so it survives full
+     * restarts too). schematicAnchorY starts NaN (ground level unknown) exactly
+     * like baseGroundY - found dynamically once the bot is close enough, see
+     * BotPlayerAI.tryBuildSchematic.
+     */
+    private static String schematicName = null;
+    private static double schematicAnchorX;
+    private static double schematicAnchorY = Double.NaN;
+    private static double schematicAnchorZ;
+    private static int schematicDimension;
+    private static int schematicBlockIndex = 0;
+
+    public static boolean hasActiveSchematicBuild() {
+        return schematicName != null;
+    }
+
+    public static String getSchematicName() {
+        return schematicName;
+    }
+
+    public static double getSchematicAnchorX() {
+        return schematicAnchorX;
+    }
+
+    public static double getSchematicAnchorY() {
+        return schematicAnchorY;
+    }
+
+    public static void setSchematicAnchorY(double y) {
+        schematicAnchorY = y;
+    }
+
+    public static double getSchematicAnchorZ() {
+        return schematicAnchorZ;
+    }
+
+    public static int getSchematicDimension() {
+        return schematicDimension;
+    }
+
+    public static int getSchematicBlockIndex() {
+        return schematicBlockIndex;
+    }
+
+    /**
+     * Deliberately does NOT save on every call, matching setBaseWallIndex's
+     * existing pattern - this is called once per block placement, which could
+     * be dozens of times a minute during a build, and synchronous disk I/O
+     * that often on the main tick thread is exactly the kind of thing this
+     * project has already learned to avoid (see tryBuildSchematic's own
+     * per-tick-load fix from earlier tonight). Progress is instead persisted
+     * at the same checkpoints base-build progress already uses: despawn()
+     * and server shutdown - a crash between those points loses at most the
+     * blocks placed since the last checkpoint, not silently corrupting
+     * anything, since placeNextWallBlock's/tryBuildSchematic's "already
+     * correct" resume check re-derives lost progress for free anyway.
+     */
+    public static void setSchematicBlockIndex(int index) {
+        schematicBlockIndex = index;
+    }
+
+    /** Starts (or restarts) a schematic build at the given anchor - used by both /brain schem build and the autonomous idle picker. */
+    public static void startSchematicBuild(String name, double anchorX, double anchorZ, int dimension) {
+        schematicName = name;
+        schematicAnchorX = anchorX;
+        schematicAnchorZ = anchorZ;
+        schematicAnchorY = Double.NaN;
+        schematicDimension = dimension;
+        schematicBlockIndex = 0;
+        saveSchematicProgress();
+    }
+
+    public static void clearSchematicBuild() {
+        schematicName = null;
+        schematicBlockIndex = 0;
+        schematicAnchorY = Double.NaN;
+        saveSchematicProgress();
+    }
+
+    public static void saveSchematicProgress() {
+        DataOutputStream out = null;
+        try {
+            out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(new File(getSaveDir(), "schembuild.dat"))));
+            out.writeBoolean(schematicName != null);
+            if (schematicName != null) {
+                out.writeUTF(schematicName);
+                out.writeDouble(schematicAnchorX);
+                out.writeDouble(schematicAnchorY);
+                out.writeDouble(schematicAnchorZ);
+                out.writeInt(schematicDimension);
+                out.writeInt(schematicBlockIndex);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (out != null) {
+                try {
+                    out.close();
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    public static void loadSchematicProgress() {
+        File file = new File(getSaveDir(), "schembuild.dat");
+        if (!file.exists()) return;
+
+        DataInputStream in = null;
+        try {
+            in = new DataInputStream(new BufferedInputStream(new FileInputStream(file)));
+            if (!in.readBoolean()) return;
+            schematicName = in.readUTF();
+            schematicAnchorX = in.readDouble();
+            schematicAnchorY = in.readDouble();
+            schematicAnchorZ = in.readDouble();
+            schematicDimension = in.readInt();
+            schematicBlockIndex = in.readInt();
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
     public static String getBotName() {
         return botName;
     }
@@ -561,6 +694,7 @@ public class BotPlayerManager {
     public static void despawn(BotPlayer bot) {
         saveInventory(bot);
         saveBaseProgress();
+        saveSchematicProgress();
         MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
         server.getConfigurationManager().playerEntityList.remove(bot);
         server.getConfigurationManager().sendPacketToAllPlayers(new S38PacketPlayerListItem(bot.getDisplayName(), false, 0));

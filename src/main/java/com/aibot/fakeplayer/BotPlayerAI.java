@@ -3,6 +3,8 @@ package com.aibot.fakeplayer;
 import com.aibot.brain.ActionType;
 import com.aibot.brain.BrainManager;
 import com.aibot.brain.StateEncoder;
+import com.aibot.schematic.Schematic;
+import com.aibot.schematic.SchematicManager;
 import com.aibot.web.ErrorLog;
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
@@ -127,6 +129,11 @@ public class BotPlayerAI {
     /** Base footprint is a (2*BASE_HALF_SIZE+1) square, walls BASE_WALL_HEIGHT tall, one door gap. */
     private static final int BASE_HALF_SIZE = 2;
     private static final int BASE_WALL_HEIGHT = 3;
+
+    /** How often (idle-fallback ticks) to check whether to kick off an autonomous schematic build - not every tick, this only matters while genuinely idle and alone. */
+    private static final int AUTO_SCHEM_CHECK_INTERVAL_TICKS = 20 * 60 * 5; // ~5 min
+    private static final double AUTO_SCHEM_MIN_DISTANCE = 30.0;
+    private static final double AUTO_SCHEM_MAX_DISTANCE = 70.0;
 
     private static final double DOOR_CLOSE_DISTANCE = 3.0;
     /** Widened per "give him all the ESP you can" - pure entity-list distance check, cheap regardless of radius (cost scales with nearby entity count, not scan volume), so bumped generously. Also used by wool/food hunting. */
@@ -357,6 +364,19 @@ public class BotPlayerAI {
         // half-built base once it's underway.
         if (!BotPlayerManager.isBaseChestPlaced() && tryBuildBase(mob)) {
             mob.currentBehavior = "building base (see /brain base)";
+            applyNnMovementFlourish(mob);
+            recordBehaviorSample(mob);
+            return;
+        }
+
+        // A saved schematic build in progress - either started explicitly via
+        // /brain schem build, or picked autonomously while idle and alone (see
+        // maybeStartAutonomousSchematicBuild in gatherOrWander). Its own base
+        // above still takes priority (survival/home comes first), but this
+        // outranks the ambient NN-decision loop below the same way goals do.
+        if (BotPlayerManager.hasActiveSchematicBuild() && tryBuildSchematic(mob)) {
+            mob.currentBehavior = "building schematic '" + BotPlayerManager.getSchematicName()
+                    + "' (" + BotPlayerManager.getSchematicBlockIndex() + " blocks placed)";
             applyNnMovementFlourish(mob);
             recordBehaviorSample(mob);
             return;
@@ -1136,10 +1156,45 @@ public class BotPlayerAI {
             recordBehaviorSample(mob);
             return;
         }
-        // Nothing left to do this tick - per explicit "stop wandering" request,
-        // just stand still instead of picking a random nearby point to walk to.
+        // Genuinely nothing else to do right now - last chance to pick a new
+        // autonomous schematic build before falling all the way through to
+        // standing still (per explicit "stop wandering" request, no random
+        // wander target is picked here either way).
+        maybeStartAutonomousSchematicBuild(mob);
         // moveForward/moveStrafing are already 0 here (reset at the top of
         // execute() before this method runs).
+    }
+
+    /**
+     * Self-play building: while genuinely idle (nothing else to gather/loot/farm/
+     * build for its own base) and nobody real is online, occasionally pick a
+     * random saved schematic and a random nearby site and start building it -
+     * per explicit user request ("Autonomous during idle/self-play"). Does
+     * nothing if no schematics have been captured yet (/brain schem save), if a
+     * build is already in progress, or if the bot's own base isn't finished yet
+     * (survival/home comes first). Checked on a long cooldown since this is only
+     * ever reached from the very end of the idle-fallback chain, i.e. already
+     * infrequent by construction.
+     */
+    private boolean maybeStartAutonomousSchematicBuild(BotPlayer mob) {
+        if (BotPlayerManager.hasActiveSchematicBuild()) return false;
+        if (!BotPlayerManager.isBaseChestPlaced()) return false;
+        if (isAnyRealPlayerOnline()) return false;
+
+        mob.autoSchemCheckCooldown--;
+        if (mob.autoSchemCheckCooldown > 0) return false;
+        mob.autoSchemCheckCooldown = AUTO_SCHEM_CHECK_INTERVAL_TICKS;
+
+        List<String> names = SchematicManager.listNames();
+        if (names.isEmpty()) return false;
+
+        String chosen = names.get(mob.worldObj.rand.nextInt(names.size()));
+        double angle = mob.worldObj.rand.nextDouble() * Math.PI * 2.0;
+        double distance = AUTO_SCHEM_MIN_DISTANCE + mob.worldObj.rand.nextDouble() * (AUTO_SCHEM_MAX_DISTANCE - AUTO_SCHEM_MIN_DISTANCE);
+        double anchorX = BotPlayerManager.getBaseX() + Math.cos(angle) * distance;
+        double anchorZ = BotPlayerManager.getBaseZ() + Math.sin(angle) * distance;
+        BotPlayerManager.startSchematicBuild(chosen, anchorX, anchorZ, mob.dimension);
+        return true;
     }
 
     /**
@@ -2066,6 +2121,95 @@ public class BotPlayerAI {
             return placeBaseCraftingTable(mob, baseY);
         }
         return placeBaseChest(mob, baseY);
+    }
+
+    /**
+     * Places the next block of the active schematic build (see BotPlayerManager's
+     * schematic* fields) - same "walk to target, act, advance to next step"
+     * pattern as placeNextWallBlock/tryBuildBase above, generalized to an
+     * arbitrary saved blueprint instead of the fixed 5x5 base. Ground level at
+     * the build site is unknown in advance (same as the base site), so it's
+     * found once the bot is close enough and cached, exactly like
+     * BotPlayerManager.baseGroundY.
+     *
+     * If the bot doesn't have the required block in inventory for the current
+     * step, this returns false (same as placeNextWallBlock running out of
+     * cobblestone) - lets whatever gathering fallback is available take over
+     * instead of getting stuck demanding a block it can't get, and the same
+     * step is retried automatically next time this tier is reached.
+     */
+    private boolean tryBuildSchematic(BotPlayer mob) {
+        if (mob.dimension != BotPlayerManager.getSchematicDimension()) return false;
+
+        String activeName = BotPlayerManager.getSchematicName();
+        if (!activeName.equals(mob.cachedSchematicName)) {
+            mob.cachedSchematic = SchematicManager.load(activeName);
+            mob.cachedSchematicName = activeName;
+        }
+        Schematic schem = mob.cachedSchematic;
+        if (schem == null || schem.blocks.isEmpty()) {
+            BotPlayerManager.clearSchematicBuild();
+            return false;
+        }
+
+        if (Double.isNaN(BotPlayerManager.getSchematicAnchorY())) {
+            double dx = BotPlayerManager.getSchematicAnchorX() - mob.posX;
+            double dz = BotPlayerManager.getSchematicAnchorZ() - mob.posZ;
+            if (dx * dx + dz * dz > GATHER_SCAN_RADIUS * GATHER_SCAN_RADIUS) {
+                return followPathOrStraightLine(mob, BotPlayerManager.getSchematicAnchorX(), mob.posY, BotPlayerManager.getSchematicAnchorZ());
+            }
+            int gy = findGroundY(mob.worldObj,
+                    MathHelper.floor_double(BotPlayerManager.getSchematicAnchorX()), MathHelper.floor_double(mob.posY), MathHelper.floor_double(BotPlayerManager.getSchematicAnchorZ()));
+            BotPlayerManager.setSchematicAnchorY(gy == Integer.MIN_VALUE ? mob.posY : gy);
+        }
+
+        int index = BotPlayerManager.getSchematicBlockIndex();
+        if (index >= schem.blocks.size()) {
+            BotPlayerManager.clearSchematicBuild();
+            return false;
+        }
+
+        Schematic.BlockEntry entry = schem.blocks.get(index);
+        int baseY = (int) BotPlayerManager.getSchematicAnchorY();
+        int tx = MathHelper.floor_double(BotPlayerManager.getSchematicAnchorX()) + entry.dx;
+        int ty = baseY + entry.dy;
+        int tz = MathHelper.floor_double(BotPlayerManager.getSchematicAnchorZ()) + entry.dz;
+
+        Block targetBlock = (Block) Block.blockRegistry.getObject(entry.blockName);
+        if (targetBlock == null || targetBlock.getMaterial() == Material.air) {
+            // Unknown registry name (e.g. a modded block from a schematic captured
+            // under a different modpack) or a stray air entry - nothing useful to
+            // place, skip it rather than getting stuck here forever.
+            BotPlayerManager.setSchematicBlockIndex(index + 1);
+            return true;
+        }
+
+        if (mob.worldObj.getBlock(tx, ty, tz) == targetBlock && mob.worldObj.getBlockMetadata(tx, ty, tz) == entry.meta) {
+            BotPlayerManager.setSchematicBlockIndex(index + 1); // already correct (resumed after a restart) - nothing to do
+            return true;
+        }
+
+        double dx = (tx + 0.5) - mob.posX;
+        double dz = (tz + 0.5) - mob.posZ;
+        double distSq = dx * dx + dz * dz;
+        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        turnToward(mob, yaw);
+
+        if (distSq <= GATHER_REACH * GATHER_REACH) {
+            ItemStack material = findItemStackOfBlock(mob, targetBlock);
+            if (material == null) return false; // out of material - let gathering resume, this step retries later
+            mob.moveStrafing = 0.0F;
+            mob.moveForward = 0.0F;
+            mob.swingItem();
+            mob.worldObj.setBlock(tx, ty, tz, targetBlock, entry.meta, 3);
+            material.stackSize--;
+            if (material.stackSize <= 0) removeStack(mob, material);
+            BotPlayerManager.setSchematicBlockIndex(index + 1);
+        } else {
+            mob.moveStrafing = 0.0F;
+            mob.moveForward = MOVE_SPEED;
+        }
+        return true;
     }
 
     /**
