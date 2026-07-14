@@ -851,5 +851,10 @@ public class BotPlayerManager {
 
         ChatComponentTranslation message = new ChatComponentTranslation("chat.type.text", bot.getDisplayName(), text);
         server.getConfigurationManager().sendPacketToAllPlayers(new S02PacketChat(message));
+
+        // Mirrors everything the bot says in-game (ChatAI replies, etc.) into
+        // Discord too, not just periodic status - single funnel point, so this
+        // covers every current and future caller of say() for free.
+        com.aibot.web.DiscordWebhook.send("💬 **" + bot.getDisplayName() + "**: " + text);
     }
 }

@@ -46,7 +46,12 @@ import java.util.UUID;
  */
 public class WebDashboardServer {
 
-    private static final int PORT = 25581;
+    // Was 25581 - never had a real Pterodactyl network allocation, so the
+    // host's firewall silently dropped everything to it regardless of what
+    // the JVM bound to (confirmed 2026-07-14: the server only had one
+    // allocation, the game port itself). Switched to 5652, a port actually
+    // allocated via the panel's API specifically so this would be reachable.
+    private static final int PORT = 5652;
     private static final Charset UTF8 = Charset.forName("UTF-8");
     private static final int DEFAULT_SAMPLE_LIMIT = 500;
     private static final int MAX_SAMPLE_LIMIT = 5000;

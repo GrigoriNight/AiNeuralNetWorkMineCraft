@@ -322,11 +322,14 @@ public class CommandBrain extends CommandBase {
             }
             sender.addChatMessage(new ChatComponentText(sb.toString()));
         } else if (sub.equals("schem")) {
-            if (!(sender instanceof EntityPlayer)) {
-                sender.addChatMessage(new ChatComponentText("Only a player can use /brain schem."));
-                return;
-            }
-            EntityPlayer player = (EntityPlayer) sender;
+            // Deliberately NOT gated to "sender instanceof EntityPlayer" as a
+            // whole block (it used to be) - tool/pos1/pos2 genuinely need a real
+            // player standing somewhere, but list and build (given explicit x/z)
+            // don't need a player at all, and now have a real caller that isn't
+            // one: DiscordBotBridge relays commands through a console-equivalent
+            // sender, not a real EntityPlayer. Each action below checks for a
+            // player itself only where it actually needs one.
+            EntityPlayer player = sender instanceof EntityPlayer ? (EntityPlayer) sender : null;
             if (args.length < 2) {
                 sender.addChatMessage(new ChatComponentText("Usage: /brain schem <tool|pos1|pos2|save <name>|list|build <name> [x z]>"));
                 return;
@@ -334,20 +337,36 @@ public class CommandBrain extends CommandBase {
             String action = args[1].toLowerCase();
 
             if (action.equals("tool")) {
+                if (player == null) {
+                    sender.addChatMessage(new ChatComponentText("Only a player can use /brain schem tool."));
+                    return;
+                }
                 ItemStack tool = SchematicTool.createToolStack();
                 if (!player.inventory.addItemStackToInventory(tool)) {
                     player.entityDropItem(tool, 0.5F);
                 }
                 sender.addChatMessage(new ChatComponentText("Gave you the " + SchematicTool.TOOL_NAME + " wand - right-click a block for corner 1, left-click for corner 2, then /brain schem save <name>."));
             } else if (action.equals("pos1")) {
+                if (player == null) {
+                    sender.addChatMessage(new ChatComponentText("Only a player can use /brain schem pos1."));
+                    return;
+                }
                 SchematicSelection.setPos1(player.getCommandSenderName(),
                         MathHelper.floor_double(player.posX), MathHelper.floor_double(player.posY), MathHelper.floor_double(player.posZ));
                 sender.addChatMessage(new ChatComponentText("Schematic corner 1 set at your position."));
             } else if (action.equals("pos2")) {
+                if (player == null) {
+                    sender.addChatMessage(new ChatComponentText("Only a player can use /brain schem pos2."));
+                    return;
+                }
                 SchematicSelection.setPos2(player.getCommandSenderName(),
                         MathHelper.floor_double(player.posX), MathHelper.floor_double(player.posY), MathHelper.floor_double(player.posZ));
                 sender.addChatMessage(new ChatComponentText("Schematic corner 2 set at your position."));
             } else if (action.equals("save")) {
+                if (player == null) {
+                    sender.addChatMessage(new ChatComponentText("Only a player can use /brain schem save."));
+                    return;
+                }
                 if (args.length < 3) {
                     sender.addChatMessage(new ChatComponentText("Usage: /brain schem save <name>"));
                     return;
@@ -421,11 +440,19 @@ public class CommandBrain extends CommandBase {
                         sender.addChatMessage(new ChatComponentText("x/z must be numbers."));
                         return;
                     }
-                } else {
+                } else if (player != null) {
                     x = player.posX;
                     z = player.posZ;
+                } else {
+                    sender.addChatMessage(new ChatComponentText("Usage: /brain schem build <name> <x> <z> (coordinates are required when run by something other than a player, e.g. via /brain discordbot)."));
+                    return;
                 }
-                BotPlayerManager.startSchematicBuild(name, x, z, player.dimension);
+                // A non-player sender (e.g. relayed via /brain discordbot) has no
+                // dimension of its own - build in whatever dimension the bot is
+                // actually in right now instead, which is the only sensible
+                // anchor available.
+                int dimension = player != null ? player.dimension : bot.dimension;
+                BotPlayerManager.startSchematicBuild(name, x, z, dimension);
                 sender.addChatMessage(new ChatComponentText(BotPlayerManager.getBotName() + " will build '" + name + "' near " + (int) x + ", " + (int) z + "."));
             } else {
                 sender.addChatMessage(new ChatComponentText("Usage: /brain schem <tool|pos1|pos2|save <name>|list|build <name> [x z]>"));
